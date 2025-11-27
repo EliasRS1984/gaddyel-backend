@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "src/index.js",
+      "use": "@vercel/node"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "src/index.js"
+    }
+  ],
+  "env": {
+    "MONGO_URI": "@MONGO_URI",
+    "CLOUDINARY_CLOUD_NAME": "@CLOUDINARY_CLOUD_NAME",
+    "CLOUDINARY_API_KEY": "@CLOUDINARY_API_KEY",
+    "CLOUDINARY_API_SECRET": "@CLOUDINARY_API_SECRET",
+    "JWT_SECRET": "@JWT_SECRET",
+    "REFRESH_TOKEN_EXP_DAYS": "@REFRESH_TOKEN_EXP_DAYS",
+    "NODE_ENV": "production"
+  }
+}

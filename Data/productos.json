@@ -1,0 +1,365 @@
+[
+    {
+        "nombre": "Set Toallas para Manos Premium",
+        "descripcionCorta": "Suavidad y absorción para tus clientes, ideal para spas y centros de estética.",
+        "descripcionLarga": "Nuestro set de toallas premium está confeccionado con 100% algodón de alta calidad. Ofrece una suavidad inigualable y una absorción superior, ideal para el uso profesional en spas, salones de belleza y centros de estética. Son duraderas, de fácil lavado y mantienen su textura después de múltiples ciclos de uso.",
+        "imagenPrincipal": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552185/gaddyel_catalogo/d8tvmj9iex7kyrc0se2g.jpg",
+        "esDestacado": false,
+        "categoria": "Blanquería para Estética",
+        "material": "100% Algodón",
+        "tamaños": [
+            "(40x30cm)"
+        ],
+        "colores": [
+            "Blanco"
+        ],
+        "esPersonalizable": true,
+        "precio": 68000,
+        "cantidadUnidades": 12,
+        "galeria": [
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552185/gaddyel_catalogo/d8tvmj9iex7kyrc0se2g.jpg",
+                "alt": "Set de Toallas Premium"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552186/gaddyel_catalogo/gsqcjsnmcfflpdupaias.jpg",
+                "alt": "Toalla"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552187/gaddyel_catalogo/sghgpfuhxdy9dgj4ojbp.jpg",
+                "alt": "Toalla"
+            }
+        ]
+    },
+    {
+        "nombre": "Batas Beauty",
+        "descripcionCorta": "El toque de lujo y exclusividad para tu establecimiento.",
+        "descripcionLarga": "Estas batas de satén no solo son elegantes, sino que también son increíblemente cómodas. Pueden ser personalizadas con el logo de tu establecimiento, lo que las convierte en algo perfecto o en un regalo de lujo para tus clientes más exclusivos. Su tejido ligero y suave proporciona una experiencia de máximo confort.",
+        "imagenPrincipal": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552168/gaddyel_catalogo/wbjwuwdsgq2gaotmcnie.jpg",
+        "esDestacado": true,
+        "categoria": "Blanquería para Estética",
+        "material": "Satén de seda",
+        "tamaños": [
+            "standard",
+            "Especial"
+        ],
+        "colores": [
+            "Blanco",
+            "Negro",
+            "Marfil",
+            "Champagne"
+        ],
+        "esPersonalizable": true,
+        "precio": 87000,
+        "cantidadUnidades": 2,
+        "galeria": [
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552168/gaddyel_catalogo/wbjwuwdsgq2gaotmcnie.jpg",
+                "alt": "Batas Personalizadas"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552169/gaddyel_catalogo/zy4qzkqrcb5vcyf1ortk.jpg",
+                "alt": "Batas Personalizadas"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552167/gaddyel_catalogo/fsz2unuwq3vg0u6obuqi.jpg",
+                "alt": "Batas de satén en uso"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552166/gaddyel_catalogo/pv6xpcpsaxboolmjsybt.jpg",
+                "alt": "Batas Personalizadas"
+            }
+        ]
+    },
+    {
+        "nombre": "Vinchas para Tratamientos Faciales",
+        "descripcionCorta": "Comodidad y estilo para cada sesión de belleza. Material hipoalergénico.",
+        "descripcionLarga": "Fabricadas con plush suave e hipoalergénica, estas vinchas están diseñadas para mantener el cabello alejado del rostro durante cualquier tratamiento facial o de maquillaje. Son elásticas, no aprietan y se adaptan a cualquier tamaño de cabeza, garantizando la comodidad de tus clientes durante toda la sesión.",
+        "imagenPrincipal": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552210/gaddyel_catalogo/vlaiyxfhnqgpczrdr9zd.jpg",
+        "esDestacado": false,
+        "categoria": "Blanquería para Estética",
+        "material": "Plush",
+        "tamaños": [
+            "Único"
+        ],
+        "colores": [
+            "Blanco",
+            "Negro",
+            "Verde Inglés"
+        ],
+        "esPersonalizable": true,
+        "precio": 66000,
+        "cantidadUnidades": 12,
+        "galeria": [
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552210/gaddyel_catalogo/vlaiyxfhnqgpczrdr9zd.jpg",
+                "alt": "Vinchas para Tratamientos Faciales"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552208/gaddyel_catalogo/svc35zgbl3j71t6tt0mf.jpg",
+                "alt": "Vinchas"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552206/gaddyel_catalogo/u9mhxbaraqbtcuckvior.jpg",
+                "alt": "Vinchas"
+            }
+        ]
+    },
+    {
+        "nombre": "Pads",
+        "descripcionCorta": "Pads de limpieza facial, perfectos para tus clientes.",
+        "descripcionLarga": "Nuestros pads de limpieza facial reutilizables son la alternativa sostenible a los discos de algodón desechables. Hechos de un material ultra suave, eliminan el maquillaje y las impurezas de manera efectiva y delicada. Ideales para el cuidado diario de la piel y el uso profesional en salones de belleza.",
+        "imagenPrincipal": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552176/gaddyel_catalogo/xwlp6jcczkbdymdoe6i6.jpg",
+        "esDestacado": false,
+        "categoria": "Blanquería para Estética",
+        "material": "plush y toalla",
+        "tamaños": [
+            "Único"
+        ],
+        "colores": [
+            "Varios"
+        ],
+        "esPersonalizable": false,
+        "precio": 36000,
+        "cantidadUnidades": 12,
+        "galeria": [
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552176/gaddyel_catalogo/xwlp6jcczkbdymdoe6i6.jpg",
+                "alt": "Pads de limpieza facial"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552175/gaddyel_catalogo/fihgfgnpmdie3vhgm2yh.jpg",
+                "alt": "Paquetes de pads"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552174/gaddyel_catalogo/q32irdfxwbmbxqedt9kz.jpg",
+                "alt": "Paquetes de pads"
+            }
+        ]
+    },
+    {
+        "nombre": "Kit de Limpieza Facial",
+        "descripcionCorta": "Kit de limpieza facial. Material hipoalergénico.",
+        "descripcionLarga": "El kit de limpieza facial es un conjunto completo para un cuidado de la piel profundo. Incluye una vincha, toalla facial y pads, todo fabricado con materiales hipoalergénicos de la más alta calidad para asegurar una limpieza suave pero efectiva. Perfecto para rituales de spa en casa o como un detalle de bienvenida para tus clientes. (6 Toallas de manos, 6 Vinchas, 12 Pads)",
+        "imagenPrincipal": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552172/gaddyel_catalogo/j4tw0i1rjogksrfm8bp0.jpg",
+        "esDestacado": true,
+        "categoria": "Blanquería para Estética",
+        "material": "Varios",
+        "tamaños": [
+            "Único"
+        ],
+        "colores": [
+            "Varios"
+        ],
+        "esPersonalizable": true,
+        "precio": 103000,
+        "cantidadUnidades": 24,
+        "galeria": [
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552172/gaddyel_catalogo/j4tw0i1rjogksrfm8bp0.jpg",
+                "alt": "Kit de Limpieza Facial"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552171/gaddyel_catalogo/k57qfawq8qcbmegs1kle.jpg",
+                "alt": "Productos del kit"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552171/gaddyel_catalogo/xxzmfg75dx0zbhuedlpt.jpg",
+                "alt": "Productos del kit"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552169/gaddyel_catalogo/z8otetyghlz6jyq10zvz.jpg",
+                "alt": "Productos del kit"
+            }
+        ]
+    },
+    {
+        "nombre": "Pareos",
+        "descripcionCorta": "Pareos caricias sin fin. Material hipoalergénico.",
+        "descripcionLarga": "Pareos caricias sin fin para tratamientos corporales. suaves y ergonómicos, ideales para el uso profesional en salones de belleza y centros de estética.",
+        "imagenPrincipal": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552181/gaddyel_catalogo/xs4kmxvgxxdlyy0ezjoe.png",
+        "esDestacado": true,
+        "categoria": "Blanquería para Estética",
+        "material": "plush",
+        "tamaños": [
+            "Único"
+        ],
+        "colores": [
+            "Negro",
+            "Blanco",
+            "Verde Inglés",
+            "Rosa",
+            "Natural"
+        ],
+        "esPersonalizable": true,
+        "precio": 56000,
+        "cantidadUnidades": 2,
+        "galeria": [
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552181/gaddyel_catalogo/xs4kmxvgxxdlyy0ezjoe.png",
+                "alt": "Pareos"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552179/gaddyel_catalogo/h8fmkla6f3uzkzayj1lg.jpg",
+                "alt": "Pareos"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552178/gaddyel_catalogo/q21dkts6mxnwzhwx2xub.jpg",
+                "alt": "Pareos"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552177/gaddyel_catalogo/peombeton2dvqccx2njb.jpg",
+                "alt": "Pareos"
+            }
+        ]
+    },
+    {
+        "nombre": "Conjunto para Camilla",
+        "descripcionCorta": "Sabana más Funda de Almohada.",
+        "descripcionLarga": "Diseñados para un entorno profesional y de confort. Ideal para el uso profesional en Salones de Belleza, Centros de Estética y Spas.",
+        "imagenPrincipal": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552183/gaddyel_catalogo/hgul1ulgewapzss9n9gk.jpg",
+        "esDestacado": false,
+        "categoria": "Blanquería para Estética",
+        "material": "Microfibra",
+        "tamaños": [
+            "2x1.20m",
+            "2.40x1.20m"
+        ],
+        "colores": [
+            "Blanco"
+        ],
+        "esPersonalizable": true,
+        "precio": 26000,
+        "cantidadUnidades": 1,
+        "galeria": [
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552183/gaddyel_catalogo/hgul1ulgewapzss9n9gk.jpg",
+                "alt": "Conjunto para Camilla"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552184/gaddyel_catalogo/qimvjq8ismo8k9qmduld.jpg",
+                "alt": "Conjunto para Camilla"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552182/gaddyel_catalogo/zjalbfpagjjdgnwxhwju.jpg",
+                "alt": "Conjunto para Camilla"
+            }
+        ]
+    },
+    {
+        "nombre": "Turbantes",
+        "descripcionCorta": "Toalla Turbante.",
+        "descripcionLarga": "Envuelve delicadamente el cabello, reduciendo el tiempo de secado y minimizando el frizz sin necesidad de fricción. Ideal para el uso post-tratamiento capilar, facial o corporal, nuestro turbante ofrece una solución confortable que eleva la experiencia del cliente.",
+        "imagenPrincipal": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552206/gaddyel_catalogo/vjhyxybx4nufyigymuvu.jpg",
+        "esDestacado": false,
+        "categoria": "Blanquería para Estética",
+        "material": "100% algodón",
+        "tamaños": [
+            "Único"
+        ],
+        "colores": [
+            "Varios"
+        ],
+        "esPersonalizable": true,
+        "precio": 60000,
+        "cantidadUnidades": 4,
+        "galeria": [
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552206/gaddyel_catalogo/vjhyxybx4nufyigymuvu.jpg",
+                "alt": "Toalla Turbante"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552203/gaddyel_catalogo/oawgob2ebuq85ym66dwg.jpg",
+                "alt": "Toalla Turbante"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552204/gaddyel_catalogo/nkiszvqjbvbmbnu5tmqj.jpg",
+                "alt": "Toalla Turbante"
+            }
+        ]
+    },
+    {
+        "nombre": "Batas Caricias sin fin",
+        "descripcionCorta": "Batas Caricias Sin Fin. Donde el bienestar se siente, y el lujo se vive.",
+        "descripcionLarga": "Diseñadas para ofrecer una sensación de calidez y ligereza, son el complemento perfecto para relajar los sentidos antes y después de cada tratamiento. Permita que sus clientes experimenten la sublime suavidad que prolonga la serenidad y eleva el estándar de confort.",
+        "imagenPrincipal": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552165/gaddyel_catalogo/pbl2ajwsfo5kdh477ca1.jpg",
+        "esDestacado": false,
+        "categoria": "Blanquería para Estética",
+        "material": "plush",
+        "tamaños": [
+            "Único"
+        ],
+        "colores": [
+            "Blanco"
+        ],
+        "esPersonalizable": true,
+        "precio": 90000,
+        "cantidadUnidades": 2,
+        "galeria": [
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552165/gaddyel_catalogo/pbl2ajwsfo5kdh477ca1.jpg",
+                "alt": "Batas Caricias sin fin"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552166/gaddyel_catalogo/f7wdrddxuwweknfc6svv.jpg",
+                "alt": "Batas Caricias sin fin"
+            }
+        ]
+    },
+    {
+        "nombre": "Tote Bag Playera",
+        "descripcionCorta": "Descubre el equilibrio perfecto entre estilo, resistencia y funcionalidad con nuestro Tote Bag.",
+        "descripcionLarga": "Confeccionado en lienzo premium de alta durabilidad, este bolso está diseñado para acompañarte en tu día a día.",
+        "imagenPrincipal": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552192/gaddyel_catalogo/ra0abthkbworwmwam3vl.jpg",
+        "esDestacado": false,
+        "categoria": "Blanquería para Estética",
+        "material": "Lienzo Premium",
+        "tamaños": [
+            "Único"
+        ],
+        "colores": [
+            "Natural"
+        ],
+        "esPersonalizable": true,
+        "precio": 17000,
+        "cantidadUnidades": 1,
+        "galeria": [
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552192/gaddyel_catalogo/ra0abthkbworwmwam3vl.jpg",
+                "alt": "Tote Bag Playera"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552202/gaddyel_catalogo/ieopzvbjmzgsipflogp0.jpg",
+                "alt": "Tote Bag Playera"
+            }
+        ]
+    },
+    {
+        "nombre": "Neceser",
+        "descripcionCorta": "Eleva tu rutina de belleza con nuestro Neceser Porta Cosméticos.",
+        "descripcionLarga": "Confeccionado en material Nido de Abeja (Waffle) de alta calidad, Elegancia natural. El detalle de spa que tus cosméticos merecen.",
+        "imagenPrincipal": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552173/gaddyel_catalogo/ewmap2v4a18yziu6uvp2.png",
+        "esDestacado": false,
+        "categoria": "Blanquería para Estética",
+        "material": "Nido de Abeja",
+        "tamaños": [
+            "Único"
+        ],
+        "colores": [
+            "Blanco"
+        ],
+        "esPersonalizable": true,
+        "precio": 8000,
+        "cantidadUnidades": 1,
+        "galeria": [
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552173/gaddyel_catalogo/ewmap2v4a18yziu6uvp2.png",
+                "alt": "Neceser Porta Cosméticos"
+            },
+            {
+                "src": "https://res.cloudinary.com/dyv5lk3ct/image/upload/v1762552173/gaddyel_catalogo/dji55mhk9r88rd3z19m1.jpg",
+                "alt": "Neceser Porta Cosméticos"
+            }
+        ]
+    }
+]
