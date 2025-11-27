@@ -1,47 +1,60 @@
-# Variables de entorno
+# ============================================
+# VARIABLES DE ENTORNO (Datos Sensibles)
+# ============================================
 .env
 .env.local
 .env.*.local
+!.env.example        # ✅ INCLUIR - Documentación de variables
 
-# Dependencias
+# ============================================
+# DEPENDENCIAS (Generadas por npm)
+# ============================================
 node_modules/
 package-lock.json
 yarn.lock
 
-# Logs
+# ============================================
+# LOGS Y TEMPORALES
+# ============================================
 logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+tmp/
+temp/
 
-# Carpeta de subidas local (usar Cloudinary en producción)
+# ============================================
+# CARPETA DE SUBIDAS (No usada en Vercel)
+# ============================================
 uploads/
 
-# IDE
+# ============================================
+# IDE Y EDITORES
+# ============================================
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db
 *.swp
 *.swo
 *~
-.DS_Store
 
-# Caché
+# ============================================
+# COMPILACIÓN Y CACHÉ
+# ============================================
 .cache/
 dist/
 build/
 
-# Node
-npm-debug.log
-
-# Temporal
-tmp/
-temp/
-
-# Sistema operativo
-Thumbs.db
-.DS_Store
-
-# Archivos de prueba
-*.test.js
+# ============================================
+# TESTING
+# ============================================
 coverage/
+*.test.js
+
+# ============================================
+# SISTEMA OPERATIVO
+# ============================================
+.DS_Store
+Thumbs.db
