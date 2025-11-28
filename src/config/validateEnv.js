@@ -1,8 +1,9 @@
 // src/config/validateEnv.js
 
 /**
- * Valida que todas las variables de entorno requeridas estén presentes
- * Se ejecuta al inicio del servidor
+ * Valida variables de entorno requeridas
+ * IMPORTANTE: No lanzar error fatal - solo loguear advertencias
+ * Render inyecta vars en runtime, no en build time
  */
 export function validateEnv() {
     const required = [
@@ -11,16 +12,16 @@ export function validateEnv() {
         'CLOUDINARY_NAME',
         'CLOUDINARY_API_KEY',
         'CLOUDINARY_API_SECRET',
-        'NODE_ENV'
     ];
     
     const missing = required.filter(v => !process.env[v]);
     
     if (missing.length > 0) {
-        console.error('❌ Variables de entorno faltantes:');
-        missing.forEach(v => console.error(`   - ${v}`));
-        throw new Error(`[FATAL] Variables de entorno faltantes: ${missing.join(', ')}`);
+        console.warn('⚠️  Variables de entorno faltantes:');
+        missing.forEach(v => console.warn(`   - ${v}`));
+        console.warn('   ⚠️  La aplicación continuará, pero algunos endpoints no funcionarán');
+    } else {
+        console.log('✅ Todas las variables de entorno están configuradas');
     }
-    
-    console.log('✅ Validación de variables de entorno: EXITOSA');
 }
+
