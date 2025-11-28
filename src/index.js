@@ -29,14 +29,25 @@ app.use(cors({
             if (origin.startsWith('http://localhost:')) {
                 return callback(null, true);
             }
-        } else {
-            // En producción, restringir a dominio específico
-            const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173').split(',');
-            if (allowedOrigins.includes(origin)) {
-                return callback(null, true);
-            }
         }
         
+        // En producción O desarrollo: permitir localhost:5173 + dominios configurados
+        const allowedOrigins = [
+            'http://localhost:5173',      // Desarrollo local
+            'http://localhost:3000',      // Vite alt port
+            'http://127.0.0.1:5173',      // Localhost alternativo
+        ];
+        
+        // Agregar dominios desde variable de entorno si existen
+        if (process.env.ALLOWED_ORIGINS) {
+            allowedOrigins.push(...process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()));
+        }
+        
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+        
+        console.warn(`⚠️  CORS rechazado para origen: ${origin}`);
         callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
