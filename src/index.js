@@ -2,6 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
 import { conectarDB } from "./config/db.js";
+import { validateEnv } from "./config/validateEnv.js";
 import productoRoutes from "./routes/productRoutes.js";
 import uploadRoutes from "./routes/uploadRoutes.js";
 import seedRoutes from "./routes/seedRoutes.js";
@@ -14,6 +15,10 @@ import { errorHandler } from "./middleware/errorHandler.js";
 import cookieParser from 'cookie-parser';
 
 dotenv.config();
+
+// ✅ Validar variables de entorno al inicio
+validateEnv();
+
 const app = express();
 
 // CORS
