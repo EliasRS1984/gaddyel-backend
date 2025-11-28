@@ -31,11 +31,15 @@ app.use(cors({
             }
         }
         
-        // En producción O desarrollo: permitir localhost:5173 + dominios configurados
+        // En producción O desarrollo: permitir localhost con múltiples puertos + dominios configurados
         const allowedOrigins = [
-            'http://localhost:5173',      // Desarrollo local
-            'http://localhost:3000',      // Vite alt port
-            'http://127.0.0.1:5173',      // Localhost alternativo
+            'http://localhost:5173',      // Desarrollo local Vite (puerto predeterminado)
+            'http://localhost:5174',      // Vite segundo puerto (cuando 5173 está ocupado)
+            'http://localhost:5175',      // Vite tercer puerto
+            'http://localhost:5176',      // Vite cuarto puerto
+            'http://localhost:3000',      // React alt port
+            'http://127.0.0.1:5173',      // Localhost IP alternativo
+            'http://127.0.0.1:5174',      // Localhost IP alternativo
         ];
         
         // Agregar dominios desde variable de entorno si existen
