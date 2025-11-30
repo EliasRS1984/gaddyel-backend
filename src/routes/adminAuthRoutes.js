@@ -1,63 +1,58 @@
 // routes/adminAuthRoutes.js
 import express from "express";
-import { body, validationResult } from "express-validator";
-import adminAuthController from "../controllers/adminAuthController.js";
-
-// Middleware de validación
-const validateInput = (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ 
-            error: 'Validación fallida',
-            details: errors.array().map(e => ({ field: e.param, message: e.msg }))
-        });
-    }
-    next();
-};
+import bcrypt from "bcryptjs";
+import Admin from "../models/Admin.js";
+import jwt from "jsonwebtoken";
 
 export default function adminAuthRouter(loginLimiter) {
     const router = express.Router();
 
-    // Registrar (temporal)
-    router.post(
-        "/registrar",
-        [
-            body('usuario')
-                .trim()
-                .isLength({ min: 3, max: 30 })
-                .withMessage('Usuario debe tener 3-30 caracteres')
-                .matches(/^[a-zA-Z0-9_]+$/)
-                .withMessage('Usuario solo puede contener letras, números y guiones bajos'),
-            body('password')
-                .isLength({ min: 8, max: 50 })
-                .withMessage('Contraseña debe tener 8-50 caracteres')
-        ],
-        validateInput,
-        adminAuthController.register
-    );
+    // Registrar admin (solo temporal para crear el primero)
+    router.post("/registrar", async (req, res) => {
+        try {
+            const { usuario, password } = req.body;
 
-    // Login (con limiter y validación)
-    router.post(
-        "/login",
-        [
-            body('usuario')
-                .trim()
-                .isLength({ min: 3, max: 30 })
-                .withMessage('Usuario inválido'),
-            body('password')
-                .isLength({ min: 8 })
-                .withMessage('Contraseña inválida')
-        ],
-        validateInput,
-        loginLimiter,
-        adminAuthController.login
-    );
+            const existente = await Admin.findOne({ usuario });
+            if (existente) return res.status(400).json({ error: "El usuario ya existe" });
 
-    // Refresh token
-    router.post("/refresh", adminAuthController.refresh);
+            const hash = await bcrypt.hash(password, 10);
 
-    // Logout
-    router.post("/logout", adminAuthController.logout);
+            const nuevoAdmin = new Admin({
+                usuario,
+                password: hash,
+            });
+
+            await nuevoAdmin.save();
+            res.json({ mensaje: "Admin registrado correctamente", admin: nuevoAdmin });
+
+        } catch (error) {
+            res.status(500).json({ error: "Error registrando admin" });
+        }
+    });
+
+    // Login (con limiter)
+    router.post("/login", loginLimiter, async (req, res) => {
+        try {
+            const { usuario, password } = req.body;
+
+            const admin = await Admin.findOne({ usuario });
+            if (!admin) return res.status(404).json({ error: "Usuario no encontrado" });
+
+            const valid = await bcrypt.compare(password, admin.password);
+            if (!valid) return res.status(401).json({ error: "Password incorrecto" });
+
+            const token = jwt.sign(
+                { id: admin._id, usuario: admin.usuario },
+                process.env.JWT_SECRET_KEY,
+                { expiresIn: "7d" }
+            );
+
+            res.json({ mensaje: "Login correcto", token });
+
+        } catch (error) {
+            res.status(500).json({ error: "Error en servidor" });
+        }
+    });
 
     return router;
 }

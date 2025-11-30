@@ -1,6 +1,7 @@
 // src/middleware/security.js
-import express from 'express';
 import helmet from 'helmet';
+import mongoSanitize from 'express-mongo-sanitize';
+import xss from 'xss-clean';
 import rateLimit from 'express-rate-limit';
 
 export const applySecurity = (app) => {
@@ -10,9 +11,11 @@ export const applySecurity = (app) => {
     // Limitar tamaño del body para evitar payloads gigantescos
     app.use(express.json({ limit: '10kb' }));
 
-    // Nota: express-mongo-sanitize y xss-clean tienen conflictos con Express 5.1.0
-    // La sanitización de MongoDB se puede hacer a nivel de validación en controllers
-    // XSS protection: Helmet ya incluye X-XSS-Protection headers
+    // Sanitizar contra operadores de Mongo (.$ etc)
+    app.use(mongoSanitize());
+
+    // Limpiar inputs para evitar XSS
+    app.use(xss());
 
     // Rate limiter general (ajusta según necesidad)
     const apiLimiter = rateLimit({
@@ -28,8 +31,6 @@ export const applySecurity = (app) => {
     const loginLimiter = rateLimit({
         windowMs: 15 * 60 * 1000,
         max: 6, // intentos limitados
-        standardHeaders: true,
-        legacyHeaders: false,
         message: { error: 'Demasiados intentos de login. Prueba en 15 minutos.' }
     });
     // exportarlo para usarlo solo en la ruta de auth
