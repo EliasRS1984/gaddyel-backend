@@ -1,6 +1,14 @@
 import mongoose from "mongoose";
 
 const orderSchema = new mongoose.Schema({
+    // Número de orden único e incremental (formato: #000001)
+    orderNumber: {
+        type: String,
+        unique: true,
+        sparse: true,
+        index: true
+    },
+    
     // Referencias
     clienteId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -38,47 +46,103 @@ const orderSchema = new mongoose.Schema({
         }
     ],
     
-    // Totales
+    // Totales (en centavos para evitar problemas de decimales)
     total: {
         type: Number,
         required: true,
         min: 0
     },
     
+    // Desglose de costos
+    subtotal: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    costoEnvio: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    impuestos: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    
     // Estados de pago (Mercado Pago)
     estadoPago: {
         type: String,
-        enum: ['pending', 'approved', 'rejected', 'cancelled'],
-        default: 'pending'
+        enum: ['pending', 'approved', 'rejected', 'cancelled', 'expired', 'refunded'],
+        default: 'pending',
+        index: true
     },
     
     // Estados del pedido (Interno)
     estadoPedido: {
         type: String,
         enum: ['pendiente', 'en_produccion', 'listo', 'enviado', 'entregado', 'cancelado'],
-        default: 'pendiente'
+        default: 'pendiente',
+        index: true
     },
     
     // Integración Mercado Pago
     mercadoPagoId: {
         type: String,
         unique: true,
-        sparse: true // Permite null/undefined sin error
+        sparse: true,
+        index: true
     },
     mercadoPagoPaymentId: {
         type: String,
-        sparse: true
+        sparse: true,
+        index: true
     },
     
-    // URLs de Mercado Pago
+    // URL de checkout de Mercado Pago
     mercadoPagoCheckoutUrl: {
         type: String
+    },
+    
+    // Método de pago (extraído del webhook de MP)
+    metododePago: {
+        type: String,
+        enum: ['credit_card', 'debit_card', 'transfer', 'wallet', 'unknown'],
+        default: 'unknown'
+    },
+    
+    // Detalles del pago (extraído del webhook)
+    detallesPago: {
+        cardLastFour: String,
+        cardBrand: String,
+        installments: Number,
+        issuerBank: String,
+        authorizationCode: String,
+        paymentType: String // 'account_money', 'card', 'bank_transfer'
+    },
+    
+    // Motivo del rechazo (si fue rechazado)
+    motivoRechazo: {
+        type: String,
+        default: null
+    },
+    
+    // Dirección de entrega
+    direccionEntrega: {
+        calle: String,
+        numero: String,
+        piso: String,
+        ciudad: String,
+        codigoPostal: String,
+        provincia: String,
+        completa: String
     },
     
     // Fechas importantes
     fechaCreacion: {
         type: Date,
-        default: Date.now
+        default: Date.now,
+        index: true
     },
     fechaPago: {
         type: Date,
@@ -101,15 +165,27 @@ const orderSchema = new mongoose.Schema({
         type: String,
         default: ''
     },
+    notasCliente: {
+        type: String,
+        default: ''
+    },
     
-    // Datos del comprador (guardados en la orden)
+    // Datos del comprador (guardados en la orden para historial)
     datosComprador: {
         nombre: String,
         email: String,
-        whatsapp: String
+        whatsapp: String,
+        telefono: String,
+        cuit: String
     },
     
-    // Log de cambios
+    // Bandera para trackear si se envió confirmación
+    confirmacionEnviada: {
+        type: Boolean,
+        default: false
+    },
+    
+    // Log de cambios de estado
     historialEstados: [
         {
             estado: String,
@@ -117,16 +193,32 @@ const orderSchema = new mongoose.Schema({
                 type: Date,
                 default: Date.now
             },
-            nota: String
+            nota: String,
+            modifiedBy: String // Usuario admin que hizo el cambio
+        }
+    ],
+    
+    // Reintentos de pago
+    intentosPago: [
+        {
+            preferenceId: String,
+            paymentId: String,
+            estado: String,
+            resultado: String,
+            fechaIntento: {
+                type: Date,
+                default: Date.now
+            }
         }
     ]
 }, { timestamps: true });
 
 // Índices para búsquedas rápidas
-orderSchema.index({ clienteId: 1 });
-orderSchema.index({ estadoPago: 1 });
-orderSchema.index({ estadoPedido: 1 });
+orderSchema.index({ clienteId: 1, fechaCreacion: -1 });
+orderSchema.index({ estadoPago: 1, fechaCreacion: -1 });
+orderSchema.index({ estadoPedido: 1, fechaCreacion: -1 });
+// orderNumber ya tiene unique: true e index: true que crea índice automático
 // mercadoPagoId ya tiene unique: true que crea índice automático
-orderSchema.index({ fechaCreacion: -1 });
+orderSchema.index({ 'datosComprador.email': 1 });
 
 export default mongoose.model('Order', orderSchema);

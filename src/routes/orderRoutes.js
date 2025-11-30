@@ -7,20 +7,23 @@ import {
     getClientOrders
 } from '../controllers/orderController.js';
 import verifyToken from '../middleware/authMiddleware.js';
+import { createOrderLimiter, searchLimiter } from '../middleware/rateLimiters.js';
 
 const router = express.Router();
 
 /**
  * POST /api/pedidos/crear - Crear nuevo pedido (público)
  * NO requiere autenticación
+ * ✅ PROTEGIDO: Rate limiting (10 pedidos/15min por IP)
  */
-router.post('/crear', createOrder);
+router.post('/crear', createOrderLimiter, createOrder);
 
 /**
  * GET /api/pedidos/cliente/:clienteId - Obtener pedidos de un cliente (público)
  * El cliente ve solo sus propios pedidos
+ * ✅ PROTEGIDO: Rate limiting (30 búsquedas/15min por IP)
  */
-router.get('/cliente/:clienteId', getClientOrders);
+router.get('/cliente/:clienteId', searchLimiter, getClientOrders);
 
 // Rutas protegidas (admin)
 router.use(verifyToken);

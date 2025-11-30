@@ -2,6 +2,8 @@ import Order from '../models/Order.js';
 import Client from '../models/Client.js';
 import { Producto } from '../models/Product.js';
 import { createOrderSchema, updateOrderStatusSchema, filterOrdersSchema } from '../validators/orderValidator.js';
+import { getNextOrderNumber } from '../services/orderNumberService.js';
+import logger from '../utils/logger.js';
 
 /**
  * Crear nueva orden (público)
@@ -12,6 +14,9 @@ export const createOrder = async (req, res) => {
         // Validar input
         const { error, value } = createOrderSchema.validate(req.body);
         if (error) {
+            await logger.logCriticalError('ORDER_VALIDATION_FAILED', error.details[0].message, {
+                input: req.body
+            });
             return res.status(400).json({ error: error.details[0].message });
         }
 
@@ -20,11 +25,15 @@ export const createOrder = async (req, res) => {
         // Validar y obtener productos
         const productosValidados = [];
         let total = 0;
+        let subtotal = 0;
 
         for (const item of items) {
             const producto = await Producto.findById(item.productoId);
             
             if (!producto) {
+                await logger.logCriticalError('PRODUCT_NOT_FOUND', `Producto ${item.productoId} no encontrado`, {
+                    productoId: item.productoId
+                });
                 return res.status(404).json({ 
                     error: `Producto ${item.productoId} no encontrado` 
                 });
@@ -32,20 +41,27 @@ export const createOrder = async (req, res) => {
 
             // Validar stock
             if (producto.stock < item.cantidad) {
+                await logger.logOrderOperation('ORDER_INSUFFICIENT_STOCK', null, {
+                    productoId: producto._id,
+                    productoNombre: producto.nombre,
+                    required: item.cantidad,
+                    available: producto.stock
+                });
                 return res.status(400).json({ 
                     error: `Stock insuficiente para "${producto.nombre}". Disponible: ${producto.stock}` 
                 });
             }
 
-            const subtotal = producto.precio * item.cantidad;
-            total += subtotal;
+            const itemSubtotal = producto.precio * item.cantidad;
+            total += itemSubtotal;
+            subtotal += itemSubtotal;
 
             productosValidados.push({
                 productoId: producto._id,
                 nombre: producto.nombre,
                 cantidad: item.cantidad,
                 precioUnitario: producto.precio,
-                subtotal
+                subtotal: itemSubtotal
             });
         }
 
@@ -67,11 +83,18 @@ export const createOrder = async (req, res) => {
             await clienteDoc.save();
         }
 
+        // Generar número de orden secuencial
+        const orderNumber = await getNextOrderNumber();
+
         // Crear orden
         const orden = new Order({
+            orderNumber,
             clienteId: clienteDoc._id,
             items: productosValidados,
             total,
+            subtotal,
+            costoEnvio: 0,
+            impuestos: 0,
             datosComprador: {
                 nombre: cliente.nombre,
                 email: cliente.email,
@@ -87,19 +110,31 @@ export const createOrder = async (req, res) => {
 
         await orden.save();
 
-        console.log('✅ Orden creada:', orden._id);
+        // Log de auditoría
+        await logger.logOrderOperation('ORDER_CREATED', orden._id, {
+            orderNumber: orden.orderNumber,
+            clienteId: clienteDoc._id,
+            total: orden.total,
+            itemsCount: productosValidados.length
+        });
+
+        console.log('✅ Orden creada:', orden._id, `(${orderNumber})`);
 
         // Respuesta indica que necesita pagar con Mercado Pago
         res.status(201).json({
             ok: true,
             ordenId: orden._id,
+            orderNumber: orden.orderNumber,
             mensaje: 'Orden creada. Proceder al pago con Mercado Pago',
-            total: orden.total,
-            // El frontend usará este ID para solicitar el checkout URL
+            total: orden.total
         });
 
     } catch (err) {
         console.error('❌ Error creando orden:', err.message);
+        await logger.logCriticalError('ORDER_CREATION_ERROR', err.message, {
+            stack: err.stack,
+            body: req.body
+        });
         res.status(500).json({ error: 'Error al crear la orden' });
     }
 };
@@ -191,8 +226,13 @@ export const updateOrderStatus = async (req, res) => {
 
         const orden = await Order.findById(req.params.id);
         if (!orden) {
+            await logger.logCriticalError('ORDER_NOT_FOUND_UPDATE', `Orden ${req.params.id} no encontrada`, {
+                orderId: req.params.id
+            });
             return res.status(404).json({ error: 'Orden no encontrada' });
         }
+
+        const estadoAnterior = orden.estadoPedido;
 
         // Actualizar estado
         orden.estadoPedido = estadoPedido;
@@ -202,7 +242,8 @@ export const updateOrderStatus = async (req, res) => {
         // Registrar en historial
         orden.historialEstados.push({
             estado: estadoPedido,
-            nota: notasInternas || 'Sin notas'
+            nota: notasInternas || 'Sin notas',
+            modifiedBy: req.user?.id || 'admin'
         });
 
         // Si es "entregado", registrar fecha real
@@ -212,7 +253,15 @@ export const updateOrderStatus = async (req, res) => {
 
         await orden.save();
 
-        console.log(`✅ Orden ${req.params.id} actualizada a: ${estadoPedido}`);
+        // Log de auditoría
+        await logger.logOrderOperation('ORDER_STATUS_UPDATED', orden._id, {
+            orderNumber: orden.orderNumber,
+            estadoAnterior,
+            estadoNuevo: estadoPedido,
+            nota: notasInternas
+        });
+
+        console.log(`✅ Orden ${orden.orderNumber} actualizada a: ${estadoPedido}`);
 
         res.json({
             ok: true,
@@ -222,6 +271,10 @@ export const updateOrderStatus = async (req, res) => {
 
     } catch (err) {
         console.error('❌ Error actualizando orden:', err.message);
+        await logger.logCriticalError('ORDER_UPDATE_ERROR', err.message, {
+            orderId: req.params.id,
+            stack: err.stack
+        });
         res.status(500).json({ error: 'Error al actualizar la orden' });
     }
 };
