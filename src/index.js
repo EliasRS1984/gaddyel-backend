@@ -9,6 +9,9 @@ import seedRoutes from "./routes/seedRoutes.js";
 
 import adminAuthRoutes from "./routes/adminAuthRoutes.js";
 import adminProductosRoutes from "./routes/adminProductosRoutes.js"; // <-- FALTABA
+import orderRoutes from "./routes/orderRoutes.js";
+import mercadoPagoRoutes from "./routes/mercadoPagoRoutes.js";
+import clientRoutes from "./routes/clientRoutes.js";
 
 import { applySecurity } from "./middleware/security.js"; 
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -79,6 +82,11 @@ app.use("/api/productos/seed", seedRoutes);
 /* ===== RUTAS ADMIN ===== */
 app.use("/api/admin/auth", adminAuthRoutes(loginLimiter)); // login con limiter
 app.use("/api/admin/productos", adminProductosRoutes);     // CRUD protegido con verifyToken
+app.use("/api/admin/clientes", clientRoutes);              // Gestión de clientes CRM
+
+/* ===== RUTAS PÚBLICAS E-COMMERCE ===== */
+app.use("/api/pedidos", orderRoutes);                      // Crear pedidos (público) + listar (admin)
+app.use("/api/mercadopago", mercadoPagoRoutes);            // Checkout Mercado Pago + webhooks
 
 /* ===== MIDDLEWARE GLOBAL DE ERRORES ===== */
 app.use(errorHandler);
