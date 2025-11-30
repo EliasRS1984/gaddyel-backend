@@ -1,6 +1,6 @@
 import Order from '../models/Order.js';
 import Client from '../models/Client.js';
-import { Producto } from '../models/Product.js';
+import Product from '../models/Product.js';
 import { createOrderSchema, updateOrderStatusSchema, filterOrdersSchema } from '../validators/orderValidator.js';
 import { getNextOrderNumber } from '../services/orderNumberService.js';
 import logger from '../utils/logger.js';

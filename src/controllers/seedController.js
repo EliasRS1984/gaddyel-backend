@@ -1,13 +1,13 @@
 import fs from "fs";
-import { Producto } from "../models/Product.js";
+import Product from "../models/Product.js";
 
 export const importarProductos = async (req, res) => {
     try {
         const data = fs.readFileSync("./data/productos.json", "utf-8");
         const productos = JSON.parse(data);
 
-        await Producto.deleteMany(); // Limpia los productos anteriores
-        const insertados = await Producto.insertMany(productos);
+        await Product.deleteMany(); // Limpia los productos anteriores
+        const insertados = await Product.insertMany(productos);
 
         res.status(201).json({
             mensaje: "Productos importados correctamente",

@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 import mongoose from "mongoose";
-import { Producto } from "./src/models/Product.js";
+import Product from "./src/models/Product.js";
 
 dotenv.config();
 
@@ -222,7 +222,7 @@ const run = async () => {
     console.log("Conectado a MongoDB");
 
     // Insertamos los productos (si querés evitar duplicados, primero borrar)
-    await Producto.insertMany(productos);
+    await Product.insertMany(productos);
     console.log("Productos importados correctamente:", productos.length);
 
     await mongoose.disconnect();
