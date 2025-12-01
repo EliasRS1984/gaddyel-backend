@@ -34,7 +34,7 @@ app.use(cors({
         
         // En desarrollo, permitir cualquier puerto localhost
         if (process.env.NODE_ENV === 'development') {
-            if (origin.startsWith('http://localhost:')) {
+            if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
                 return callback(null, true);
             }
         }
@@ -53,6 +53,11 @@ app.use(cors({
         // Agregar dominios desde variable de entorno si existen
         if (process.env.ALLOWED_ORIGINS) {
             allowedOrigins.push(...process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()));
+        }
+        
+        // En producción, permitir cualquier origen (más flexible)
+        if (process.env.NODE_ENV === 'production') {
+            return callback(null, true);
         }
         
         if (allowedOrigins.includes(origin)) {
