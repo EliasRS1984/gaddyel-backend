@@ -17,7 +17,7 @@ export const applySecurity = (app) => {
     // La sanitización de MongoDB se puede hacer a nivel de validación en controllers
     // XSS protection: Helmet ya incluye X-XSS-Protection headers
 
-    // Rate limiter general - Más flexible en desarrollo
+    // Rate limiter general - Excluir rutas públicas
     const apiLimiter = rateLimit({
         windowMs: 15 * 60 * 1000, // 15 minutos
         max: process.env.NODE_ENV === 'production' ? 500 : 1000, // Aumentado para producción
@@ -25,10 +25,21 @@ export const applySecurity = (app) => {
         legacyHeaders: false,
         message: { error: 'Demasiadas solicitudes, intenta más tarde.' },
         skip: (req) => {
-            // Saltar rate limiting para localhost en desarrollo
             const ip = req.ip || req.connection.remoteAddress;
-            return process.env.NODE_ENV !== 'production' && 
-                   (ip === '127.0.0.1' || ip === '::1' || ip?.includes('localhost'));
+            // Saltar rate limiting para:
+            // 1. localhost en desarrollo
+            // 2. Rutas públicas (GET /api/productos, /api/upload, etc)
+            if (process.env.NODE_ENV !== 'production' && 
+                (ip === '127.0.0.1' || ip === '::1' || ip?.includes('localhost'))) {
+                return true;
+            }
+            
+            // Permitir GET /api/productos sin límite (ruta pública)
+            if (req.method === 'GET' && req.path === '/productos') {
+                return true;
+            }
+            
+            return false;
         },
         keyGenerator: (req) => {
             // Usar X-Forwarded-For si está disponible (para proxies)
