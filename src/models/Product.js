@@ -20,6 +20,7 @@ const productoSchema = new mongoose.Schema(
     personalizable: { type: Boolean, default: false },
     precio: { type: Number, required: true },
     cantidadUnidades: { type: Number, default: 1 },
+    propiedadesPersonalizadas: { type: Map, of: String, default: {} },
   },
   {
     timestamps: true,

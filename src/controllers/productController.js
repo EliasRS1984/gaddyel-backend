@@ -78,7 +78,8 @@ export const crearProducto = async (req, res) => {
             cantidadUnidades,
             destacado,
             imagenSrc,
-            imagenes
+            imagenes,
+            propiedadesPersonalizadas
         } = req.body;
 
         // Validación básica
@@ -116,7 +117,8 @@ export const crearProducto = async (req, res) => {
             cantidadUnidades: stock,
             destacado: destacado === true || destacado === 'true',
             imagenSrc: imagenSrc || null,
-            imagenes: imagenesLimpias
+            imagenes: imagenesLimpias,
+            propiedadesPersonalizadas: propiedadesPersonalizadas || {}
         });
 
         await nuevoProducto.save();
@@ -190,6 +192,32 @@ export const eliminarProducto = async (req, res) => {
     } catch (error) {
         console.error('Error al eliminar producto:', error);
         res.status(500).json({ error: 'Error al eliminar producto' });
+    }
+};
+
+// Toggle destacado de un producto (PATCH)
+export const toggleDestacadoProducto = async (req, res) => {
+    try {
+        const { destacado } = req.body;
+        
+        if (typeof destacado !== 'boolean') {
+            return res.status(400).json({ error: 'El campo destacado debe ser booleano' });
+        }
+
+        const producto = await Producto.findByIdAndUpdate(
+            req.params.id,
+            { destacado },
+            { new: true }
+        );
+
+        if (!producto) {
+            return res.status(404).json({ error: 'Producto no encontrado' });
+        }
+
+        res.json(producto);
+    } catch (error) {
+        console.error('Error al actualizar destacado:', error);
+        res.status(500).json({ error: 'Error al actualizar destacado' });
     }
 };
 

@@ -3,7 +3,8 @@ import {
     getProductos,
     crearProducto,
     editarProducto,
-    eliminarProducto
+    eliminarProducto,
+    toggleDestacadoProducto
 } from "../controllers/productController.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 
@@ -20,6 +21,9 @@ router.post("/", crearProducto);
 
 // Editar un producto
 router.put("/:id", editarProducto);
+
+// Toggle destacado de un producto
+router.patch("/:id/destacado", toggleDestacadoProducto);
 
 // Eliminar un producto
 router.delete("/:id", eliminarProducto);
