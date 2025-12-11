@@ -17,10 +17,27 @@ const clientSchema = new mongoose.Schema({
     },
     whatsapp: {
         type: String,
-        required: true,
+        required: false,
         trim: true,
         // Acepta formatos: +54911234567, 1112345567, etc
         match: /^(\+?\d{1,3})?[\d\s\-()]{9,}$/
+    },
+    
+    // Datos de dirección
+    direccion: {
+        type: String,
+        trim: true,
+        maxlength: 200
+    },
+    ciudad: {
+        type: String,
+        trim: true,
+        maxlength: 100
+    },
+    codigoPostal: {
+        type: String,
+        trim: true,
+        maxlength: 10
     },
     
     // Referencias a órdenes

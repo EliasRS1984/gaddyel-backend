@@ -34,6 +34,8 @@ const OrderSchema = new mongoose.Schema({
   // Información de envío
   shipping: {
     address: String,
+    city: String,
+    postalCode: String,
     notes: String,
     deadlineDate: Date,
     shippingCost: { type: Number, default: 0 },

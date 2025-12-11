@@ -176,7 +176,11 @@ const orderSchema = new mongoose.Schema({
         email: String,
         whatsapp: String,
         telefono: String,
-        cuit: String
+        cuit: String,
+        direccion: String,
+        ciudad: String,
+        codigoPostal: String,
+        notasAdicionales: String
     },
     
     // Bandera para trackear si se envió confirmación

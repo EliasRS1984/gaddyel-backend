@@ -40,8 +40,44 @@ export const createOrderSchema = Joi.object({
         whatsapp: Joi.string()
             .trim()
             .regex(/^(\+?\d{1,3})?[\d\s\-()]{9,}$/)
+            .allow('')
+            .messages({ 'string.pattern.base': 'WhatsApp inválido' }),
+        
+        direccion: Joi.string()
+            .trim()
+            .min(10)
+            .max(200)
             .required()
-            .messages({ 'string.pattern.base': 'WhatsApp inválido' })
+            .messages({ 
+                'string.min': 'Dirección mínimo 10 caracteres',
+                'string.max': 'Dirección máximo 200 caracteres',
+                'any.required': 'La dirección es obligatoria'
+            }),
+        
+        ciudad: Joi.string()
+            .trim()
+            .min(2)
+            .max(100)
+            .required()
+            .messages({ 
+                'string.min': 'Ciudad mínimo 2 caracteres',
+                'any.required': 'La ciudad es obligatoria'
+            }),
+        
+        codigoPostal: Joi.string()
+            .trim()
+            .regex(/^\d{4,6}$/)
+            .required()
+            .messages({ 
+                'string.pattern.base': 'Código postal inválido (debe tener 4-6 dígitos)',
+                'any.required': 'El código postal es obligatorio'
+            }),
+        
+        notasAdicionales: Joi.string()
+            .trim()
+            .max(500)
+            .allow('')
+            .messages({ 'string.max': 'Notas máximo 500 caracteres' })
     }).required()
 });
 

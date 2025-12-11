@@ -72,13 +72,19 @@ export const createOrder = async (req, res) => {
             clienteDoc = new Client({
                 nombre: cliente.nombre,
                 email: cliente.email,
-                whatsapp: cliente.whatsapp
+                whatsapp: cliente.whatsapp || '',
+                direccion: cliente.direccion || '',
+                ciudad: cliente.ciudad || '',
+                codigoPostal: cliente.codigoPostal || ''
             });
             await clienteDoc.save();
         } else {
             // Actualizar datos si existen
             clienteDoc.nombre = cliente.nombre;
-            clienteDoc.whatsapp = cliente.whatsapp;
+            clienteDoc.whatsapp = cliente.whatsapp || clienteDoc.whatsapp;
+            clienteDoc.direccion = cliente.direccion || clienteDoc.direccion;
+            clienteDoc.ciudad = cliente.ciudad || clienteDoc.ciudad;
+            clienteDoc.codigoPostal = cliente.codigoPostal || clienteDoc.codigoPostal;
             clienteDoc.ultimaActividad = new Date();
             await clienteDoc.save();
         }
@@ -98,7 +104,11 @@ export const createOrder = async (req, res) => {
             datosComprador: {
                 nombre: cliente.nombre,
                 email: cliente.email,
-                whatsapp: cliente.whatsapp
+                whatsapp: cliente.whatsapp || '',
+                direccion: cliente.direccion,
+                ciudad: cliente.ciudad,
+                codigoPostal: cliente.codigoPostal,
+                notasAdicionales: cliente.notasAdicionales || ''
             },
             historialEstados: [
                 {
