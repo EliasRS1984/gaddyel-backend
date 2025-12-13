@@ -2,6 +2,7 @@
 import express from 'express';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import { ipKeyGenerator } from 'express-rate-limit';
 
 export const applySecurity = (app) => {
     // Helmet: cabeceras básicas de seguridad
@@ -41,10 +42,7 @@ export const applySecurity = (app) => {
             
             return false;
         },
-        keyGenerator: (req) => {
-            // Usar X-Forwarded-For si está disponible (para proxies)
-            return req.get('X-Forwarded-For')?.split(',')[0]?.trim() || req.ip;
-        }
+        keyGenerator: ipKeyGenerator
     });
     app.use('/api', apiLimiter);
 
@@ -61,10 +59,7 @@ export const applySecurity = (app) => {
             return process.env.NODE_ENV !== 'production' && 
                    (ip === '127.0.0.1' || ip === '::1' || ip?.includes('localhost'));
         },
-        keyGenerator: (req) => {
-            // Usar X-Forwarded-For si está disponible (para proxies)
-            return req.get('X-Forwarded-For')?.split(',')[0]?.trim() || req.ip;
-        }
+        keyGenerator: ipKeyGenerator
     });
     // exportarlo para usarlo solo en la ruta de auth
     return { loginLimiter };

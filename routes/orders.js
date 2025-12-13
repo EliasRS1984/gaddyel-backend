@@ -20,6 +20,9 @@ router.post('/api/orders/:id/retry', orderController.retryPayment);
 // Listar órdenes (requiere autenticación)
 router.get('/api/admin/orders', authMiddleware, orderController.listOrders);
 
+// Obtener orden por ID (admin)
+router.get('/api/admin/orders/:id', authMiddleware, orderController.getOrderById);
+
 // Cambiar estado de orden (admin)
 router.patch('/api/admin/orders/:id/status', authMiddleware, orderController.updateOrderStatus);
 

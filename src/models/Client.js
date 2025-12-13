@@ -15,6 +15,11 @@ const clientSchema = new mongoose.Schema({
         lowercase: true,
         match: /^[^\s@]+@[^\s@]+\.[^\s@]+$/
     },
+    password: {
+        type: String,
+        required: false, // Opcional para clientes que solo hicieron pedidos sin registrarse
+        select: false // No incluir en queries por defecto
+    },
     whatsapp: {
         type: String,
         required: false,
@@ -23,21 +28,20 @@ const clientSchema = new mongoose.Schema({
         match: /^(\+?\d{1,3})?[\d\s\-()]{9,}$/
     },
     
-    // Datos de dirección
-    direccion: {
-        type: String,
-        trim: true,
-        maxlength: 200
-    },
-    ciudad: {
-        type: String,
-        trim: true,
-        maxlength: 100
-    },
-    codigoPostal: {
-        type: String,
-        trim: true,
-        maxlength: 10
+    // Direcciones de envío (array principal - sin duplicación)
+    direcciones: [
+        {
+            domicilio: { type: String, trim: true, maxlength: 200 },
+            localidad: { type: String, trim: true, maxlength: 100 },
+            provincia: { type: String, trim: true, maxlength: 100 },
+            codigoPostal: { type: String, trim: true, maxlength: 10 },
+            predeterminada: { type: Boolean, default: false },
+            etiqueta: { type: String, trim: true, maxlength: 50 } // ej: Principal, Casa, Trabajo
+        }
+    ],
+    activo: {
+        type: Boolean,
+        default: true
     },
     
     // Referencias a órdenes

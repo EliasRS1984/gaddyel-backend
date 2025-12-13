@@ -104,6 +104,15 @@ export const updateClient = async (req, res) => {
         cliente.email = value.email;
         cliente.whatsapp = value.whatsapp;
         cliente.notasInternas = value.notasInternas;
+        
+        // Actualizar campos de dirección si vienen en el body
+        if (value.domicilio !== undefined) cliente.domicilio = value.domicilio;
+        if (value.localidad !== undefined) cliente.localidad = value.localidad;
+        if (value.provincia !== undefined) cliente.provincia = value.provincia;
+        if (value.codigoPostal !== undefined) cliente.codigoPostal = value.codigoPostal;
+        // Legacy fields
+        if (value.direccion !== undefined) cliente.direccion = value.direccion;
+        if (value.ciudad !== undefined) cliente.ciudad = value.ciudad;
 
         await cliente.save();
 

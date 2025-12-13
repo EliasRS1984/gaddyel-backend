@@ -21,7 +21,8 @@ const Counter = mongoose.model('Counter', counterSchema);
 
 /**
  * Genera el próximo número de orden único
- * Formato: #000001, #000002, etc.
+ * Formato simplificado: G-001, G-002, etc.
+ * G = Gaddyel
  */
 export async function getNextOrderNumber() {
     try {
@@ -34,9 +35,9 @@ export async function getNextOrderNumber() {
             }
         );
         
-        // Formatea con ceros a la izquierda
-        const paddedNumber = String(counter.sequence_value).padStart(6, '0');
-        return `#${paddedNumber}`;
+        // Formato simplificado con 3 dígitos
+        const paddedNumber = String(counter.sequence_value).padStart(3, '0');
+        return `G-${paddedNumber}`;
     } catch (error) {
         console.error('Error al generar número de orden:', error);
         throw new Error('No se pudo generar el número de orden');

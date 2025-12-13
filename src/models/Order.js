@@ -21,7 +21,7 @@ const orderSchema = new mongoose.Schema({
         {
             productoId: {
                 type: mongoose.Schema.Types.ObjectId,
-                ref: 'Product',
+                ref: 'Producto',
                 required: true
             },
             nombre: {
@@ -31,6 +31,11 @@ const orderSchema = new mongoose.Schema({
             cantidad: {
                 type: Number,
                 required: true,
+                min: 1
+            },
+            cantidadUnidades: {
+                type: Number,
+                default: 1,
                 min: 1
             },
             precioUnitario: {
@@ -65,6 +70,13 @@ const orderSchema = new mongoose.Schema({
         min: 0
     },
     impuestos: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    
+    // Cantidad total de productos (para cálculo de envío)
+    cantidadProductos: {
         type: Number,
         default: 0,
         min: 0
@@ -152,12 +164,25 @@ const orderSchema = new mongoose.Schema({
         type: Date,
         default: null
     },
-    fechaEntregaEstimada: {
-        type: Date
+    fechaEnvioEstimada: {
+        type: Date,
+        default: null
+        // Se calcula automáticamente: fechaCreacion + 20 días
+    },
+    fechaEnvioReal: {
+        type: Date,
+        default: null
     },
     fechaEntregaReal: {
         type: Date,
         default: null
+    },
+    
+    // Tiempo de producción (en días corridos)
+    diasProduccion: {
+        type: Number,
+        default: 20,
+        min: 1
     },
     
     // Notas
@@ -179,6 +204,7 @@ const orderSchema = new mongoose.Schema({
         cuit: String,
         direccion: String,
         ciudad: String,
+        provincia: String,
         codigoPostal: String,
         notasAdicionales: String
     },
@@ -224,5 +250,47 @@ orderSchema.index({ estadoPedido: 1, fechaCreacion: -1 });
 // orderNumber ya tiene unique: true e index: true que crea índice automático
 // mercadoPagoId ya tiene unique: true que crea índice automático
 orderSchema.index({ 'datosComprador.email': 1 });
+
+/**
+ * Middleware: Calcular fecha de envío estimada antes de guardar
+ * Se ejecuta cuando se crea una nueva orden
+ */
+orderSchema.pre('save', function(next) {
+    // Solo calcular si es nuevo documento y no tiene fecha estimada
+    if (this.isNew && !this.fechaEnvioEstimada) {
+        const fechaBase = this.fechaCreacion || new Date();
+        const diasProduccion = this.diasProduccion || 20;
+        
+        // Calcular fecha sumando días corridos
+        const fechaEstimada = new Date(fechaBase);
+        fechaEstimada.setDate(fechaEstimada.getDate() + diasProduccion);
+        
+        this.fechaEnvioEstimada = fechaEstimada;
+    }
+    next();
+});
+
+/**
+ * Método de instancia: Obtener días restantes hasta envío
+ */
+orderSchema.methods.getDiasRestantesEnvio = function() {
+    if (!this.fechaEnvioEstimada) return null;
+    
+    const hoy = new Date();
+    const diferencia = this.fechaEnvioEstimada - hoy;
+    const diasRestantes = Math.ceil(diferencia / (1000 * 60 * 60 * 24));
+    
+    return Math.max(0, diasRestantes); // No devolver negativos
+};
+
+/**
+ * Método de instancia: Verificar si el pedido está retrasado
+ */
+orderSchema.methods.isRetrasado = function() {
+    if (!this.fechaEnvioEstimada || this.fechaEnvioReal) return false;
+    
+    const hoy = new Date();
+    return hoy > this.fechaEnvioEstimada && this.estadoPedido !== 'enviado' && this.estadoPedido !== 'entregado';
+};
 
 export default mongoose.model('Order', orderSchema);

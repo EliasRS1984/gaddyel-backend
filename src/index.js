@@ -8,13 +8,16 @@ import uploadRoutes from "./routes/uploadRoutes.js";
 import seedRoutes from "./routes/seedRoutes.js";
 
 import adminAuthRoutes from "./routes/adminAuthRoutes.js";
-import adminProductosRoutes from "./routes/adminProductosRoutes.js"; // <-- FALTABA
+import adminProductosRoutes from "./routes/adminProductosRoutes.js";
+import adminClientesRoutes from "./routes/adminClientesRoutes.js";
 import orderRoutes from "./routes/orderRoutes.js";
 import mercadoPagoRoutes from "./routes/mercadoPagoRoutes.js";
 import clientRoutes from "./routes/clientRoutes.js";
+import clientAuthRoutes from "./routes/clientAuthRoutes.js";
 
 import { applySecurity } from "./middleware/security.js"; 
 import { errorHandler } from "./middleware/errorHandler.js";
+import verifyToken from "./middleware/authMiddleware.js";
 import cookieParser from 'cookie-parser';
 
 dotenv.config();
@@ -83,11 +86,26 @@ conectarDB();
 app.use("/api/productos", productoRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/productos/seed", seedRoutes);
+app.use("/api/auth", clientAuthRoutes); // Autenticación de clientes
+
+// ENDPOINT DE PRUEBA - Verificar autenticación
+app.get("/api/test/auth", (req, res) => {
+    console.log('📨 GET /test/auth - Endpoint de prueba');
+    console.log('   Headers:', req.headers);
+    res.json({ ok: true, mensaje: 'Endpoint de prueba sin autenticación' });
+});
+
+app.get("/api/test/auth-protected", (req, res, next) => {
+    console.log('📨 GET /test/auth-protected - Endpoint protegido de prueba');
+    next();
+}, verifyToken, (req, res) => {
+    res.json({ ok: true, mensaje: 'Autenticación exitosa', usuario: req.user });
+});
 
 /* ===== RUTAS ADMIN ===== */
 app.use("/api/admin/auth", adminAuthRoutes(loginLimiter)); // login con limiter
 app.use("/api/admin/productos", adminProductosRoutes);     // CRUD protegido con verifyToken
-app.use("/api/admin/clientes", clientRoutes);              // Gestión de clientes CRM
+app.use("/api/admin/clientes", adminClientesRoutes);       // Gestión de clientes CRM
 
 /* ===== RUTAS PÚBLICAS E-COMMERCE ===== */
 app.use("/api/pedidos", orderRoutes);                      // Crear pedidos (público) + listar (admin)

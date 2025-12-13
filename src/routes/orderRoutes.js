@@ -4,7 +4,8 @@ import {
     getOrders,
     getOrderById,
     updateOrderStatus,
-    getClientOrders
+    getClientOrders,
+    deleteOrder
 } from '../controllers/orderController.js';
 import verifyToken from '../middleware/authMiddleware.js';
 import { createOrderLimiter, searchLimiter } from '../middleware/rateLimiters.js';
@@ -44,5 +45,12 @@ router.get('/:id', getOrderById);
  * Body: { estadoPedido, notasAdmin, fechaEntregaEstimada }
  */
 router.put('/:id/estado', updateOrderStatus);
+
+/**
+ * DELETE /api/pedidos/:id - Eliminar un pedido (admin - requiere contraseña)
+ * Body: { password }
+ * Registra la eliminación en el historial de estados
+ */
+router.delete('/:id', deleteOrder);
 
 export default router;

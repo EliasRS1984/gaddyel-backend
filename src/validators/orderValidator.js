@@ -39,9 +39,12 @@ export const createOrderSchema = Joi.object({
         
         whatsapp: Joi.string()
             .trim()
-            .regex(/^(\+?\d{1,3})?[\d\s\-()]{9,}$/)
-            .allow('')
-            .messages({ 'string.pattern.base': 'WhatsApp inválido' }),
+            .regex(/^\d{10,15}$/)
+            .required()
+            .messages({ 
+                'string.pattern.base': 'WhatsApp debe tener 10-15 dígitos',
+                'any.required': 'El WhatsApp es obligatorio'
+            }),
         
         direccion: Joi.string()
             .trim()
