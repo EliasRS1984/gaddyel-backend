@@ -2,7 +2,6 @@
 import express from 'express';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import { ipKeyGenerator } from 'express-rate-limit';
 
 export const applySecurity = (app) => {
     // Helmet: cabeceras básicas de seguridad
@@ -14,53 +13,63 @@ export const applySecurity = (app) => {
     // Trust proxy para obtener IP real en Render/Heroku
     app.set('trust proxy', 1);
 
-    // Nota: express-mongo-sanitize y xss-clean tienen conflictos con Express 5.1.0
-    // La sanitización de MongoDB se puede hacer a nivel de validación en controllers
-    // XSS protection: Helmet ya incluye X-XSS-Protection headers
+    // ✅ Helper para detectar localhost
+    const isLocalhost = (req) => {
+        const ip = req.ip || req.connection.remoteAddress;
+        return (ip === '127.0.0.1' || ip === '::1' || ip?.includes('localhost'));
+    };
 
-    // Rate limiter general - Excluir rutas públicas
+    // ✅ RATE LIMITER GENERAL - Menos estricto
     const apiLimiter = rateLimit({
         windowMs: 15 * 60 * 1000, // 15 minutos
-        max: process.env.NODE_ENV === 'production' ? 500 : 1000, // Aumentado para producción
+        max: process.env.NODE_ENV === 'production' ? 200 : 1000, // 200 req/15min = ~13 req/min
         standardHeaders: true,
         legacyHeaders: false,
         message: { error: 'Demasiadas solicitudes, intenta más tarde.' },
         skip: (req) => {
-            const ip = req.ip || req.connection.remoteAddress;
-            // Saltar rate limiting para:
-            // 1. localhost en desarrollo
-            // 2. Rutas públicas (GET /api/productos, /api/upload, etc)
-            if (process.env.NODE_ENV !== 'production' && 
-                (ip === '127.0.0.1' || ip === '::1' || ip?.includes('localhost'))) {
-                return true;
-            }
+            // Saltar en localhost desarrollo
+            if (process.env.NODE_ENV !== 'production' && isLocalhost(req)) return true;
             
-            // Permitir GET /api/productos sin límite (ruta pública)
-            if (req.method === 'GET' && req.path === '/productos') {
-                return true;
-            }
+            // Saltar para GET /api/productos (ruta pública)
+            if (req.method === 'GET' && req.path.includes('/productos')) return true;
             
             return false;
-        },
-        keyGenerator: ipKeyGenerator
+        }
     });
     app.use('/api', apiLimiter);
 
-    // Rate limiter específico para login - Más flexible en desarrollo
-    const loginLimiter = rateLimit({
+    // ✅ RATE LIMITER PARA ESCRITURA (POST/PUT/DELETE) - Más estricto
+    const writeLimiter = rateLimit({
         windowMs: 15 * 60 * 1000,
-        max: process.env.NODE_ENV === 'production' ? 20 : 50, // Aumentado para producción
+        max: process.env.NODE_ENV === 'production' ? 50 : 200, // 50 escrituras/15min
+        skipSuccessfulRequests: true, // No cuenta requests exitosos
         standardHeaders: true,
         legacyHeaders: false,
-        message: { error: 'Demasiados intentos de login. Prueba en 15 minutos.' },
-        skip: (req) => {
-            // Saltar rate limiting para localhost en desarrollo
-            const ip = req.ip || req.connection.remoteAddress;
-            return process.env.NODE_ENV !== 'production' && 
-                   (ip === '127.0.0.1' || ip === '::1' || ip?.includes('localhost'));
-        },
-        keyGenerator: ipKeyGenerator
+        message: { error: 'Demasiadas solicitudes de escritura. Intenta más tarde.' },
+        skip: (req) => process.env.NODE_ENV !== 'production' && isLocalhost(req)
     });
-    // exportarlo para usarlo solo en la ruta de auth
-    return { loginLimiter };
+
+    // ✅ RATE LIMITER PARA LOGIN - Muy estricto
+    const loginLimiter = rateLimit({
+        windowMs: 15 * 60 * 1000,
+        max: process.env.NODE_ENV === 'production' ? 5 : 20, // Máximo 5 intentos
+        skipSuccessfulRequests: true,
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { error: 'Demasiados intentos de login. Intenta en 15 minutos.' },
+        skip: (req) => process.env.NODE_ENV !== 'production' && isLocalhost(req)
+    });
+
+    // ✅ RATE LIMITER PARA UPLOAD - Muy restrictivo
+    const uploadLimiter = rateLimit({
+        windowMs: 60 * 60 * 1000, // 1 hora
+        max: process.env.NODE_ENV === 'production' ? 20 : 100, // 20 uploads/hora
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { error: 'Límite de uploads alcanzado. Intenta en 1 hora.' },
+        skip: (req) => process.env.NODE_ENV !== 'production' && isLocalhost(req)
+    });
+
+    // Exportar limiters para usar en rutas específicas
+    return { loginLimiter, writeLimiter, uploadLimiter };
 };

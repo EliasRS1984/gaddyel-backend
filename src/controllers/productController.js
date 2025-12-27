@@ -1,42 +1,42 @@
 import { Producto } from "../models/Product.js";
+import productService from "../services/productService.js";
+import logger from "../utils/logger.js";
 
 // Obtener todos los productos
-export const obtenerProductos = async (req, res) => {
+export const obtenerProductos = async (req, res, next) => {
     try {
-        const productos = await Producto.find();
+        // ✅ productService ahora retorna {data, pagination}
+        const resultado = await productService.getAllProducts(req.query);
 
         // Formato coherente con el frontend
-        const productosFormateados = productos.map(prod => ({
+        const productosFormateados = resultado.data.map(prod => ({
             _id: prod._id,
             nombre: prod.nombre,
             descripcion: prod.descripcion,
-            descripcionCompleta: prod.descripcionCompleta,
             imagenSrc: prod.imagenSrc,
             imagenes: prod.imagenes?.length ? prod.imagenes : [{ src: prod.imagenSrc, alt: prod.nombre }],
             destacado: prod.destacado,
             categoria: prod.categoria,
-            material: prod.material,
-            tamanos: prod.tamanos,
-            colores: prod.colores,
-            personalizable: prod.personalizable,
             precio: prod.precio,
             cantidadUnidades: prod.cantidadUnidades
         }));
 
-        res.json(productosFormateados);
+        // Respuesta con paginación
+        res.json({
+            data: productosFormateados,
+            pagination: resultado.pagination
+        });
     } catch (error) {
-        console.error("Error al obtener los productos:", error);
-        res.status(500).json({ error: "Error al obtener los productos" });
+        logger.error("Error al obtener los productos:", error.message);
+        next(error);
     }
 };
 
 // Obtener un producto por ID
-export const obtenerProductoPorId = async (req, res) => {
+export const obtenerProductoPorId = async (req, res, next) => {
     try {
-        const prod = await Producto.findById(req.params.id);
-        if (!prod) {
-            return res.status(404).json({ error: "Producto no encontrado" });
-        }
+        // ✅ Usar service
+        const prod = await productService.getProductById(req.params.id);
 
         const productoFormateado = {
             _id: prod._id,
@@ -57,7 +57,8 @@ export const obtenerProductoPorId = async (req, res) => {
 
         res.json(productoFormateado);
     } catch (error) {
-        console.error("Error al buscar el producto:", error);
+        logger.error("Error al buscar el producto:", error.message);
+        next(error);
         res.status(500).json({ error: "Error al buscar el producto" });
     }
 };

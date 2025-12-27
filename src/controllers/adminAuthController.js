@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import Admin from '../models/Admin.js';
 import RefreshToken from '../models/RefreshToken.js';
 import bcrypt from 'bcryptjs';
+import { JWT_CONFIG } from '../config/jwtConfig.js';
 
 const REFRESH_DAYS = Number(process.env.REFRESH_TOKEN_EXP_DAYS || 30);
 
@@ -11,12 +12,12 @@ function createRandomToken() {
 }
 
 function signAccessToken(admin) {
-  // Buscar la clave en varias variables de entorno por compatibilidad
-  const secret = process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET_KEY || process.env.JWT_SECRET;
-  if (!secret) {
-    throw new Error('JWT signing secret not configured (check JWT_ACCESS_SECRET / JWT_SECRET_KEY / JWT_SECRET)');
-  }
-  return jwt.sign({ id: admin._id, usuario: admin.usuario, role: admin.role || 'admin' }, secret, { expiresIn: '15m' });
+  // ✅ Usar configuración centralizada
+  return jwt.sign(
+    { id: admin._id, usuario: admin.usuario, role: admin.role || 'admin' }, 
+    JWT_CONFIG.accessSecret, 
+    { expiresIn: JWT_CONFIG.accessExpiry }
+  );
 }
 
 export const register = async (req, res) => {

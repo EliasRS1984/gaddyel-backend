@@ -1,11 +1,13 @@
 import Order from '../models/Order.js';
 import Client from '../models/Client.js';
 import WebhookLog from '../models/WebhookLog.js';
-import axios from 'axios';
+import MercadoPagoService from '../services/MercadoPagoService.js';
 import logger from '../utils/logger.js';
 
-const MP_ACCESS_TOKEN = process.env.MERCADO_PAGO_ACCESS_TOKEN;
-const MP_API_URL = 'https://api.mercadopago.com/v1';
+/**
+ * ✅ CONTROLADOR MERCADO PAGO - REFACTORIZADO 2025
+ * Usa el nuevo MercadoPagoService con SDK oficial
+ */
 
 /**
  * Crear preferencia de Mercado Pago (checkout)
@@ -16,7 +18,7 @@ export const createCheckoutPreference = async (req, res) => {
         const { ordenId } = req.body;
 
         if (!ordenId) {
-            await logger.logCriticalError('MP_NO_ORDER_ID', 'ordenId no proporcionado en request', {
+            logger.error('MP_NO_ORDER_ID: ordenId no proporcionado en request', {
                 body: req.body
             });
             return res.status(400).json({ error: 'ordenId requerido' });
@@ -25,81 +27,37 @@ export const createCheckoutPreference = async (req, res) => {
         // Obtener orden
         const orden = await Order.findById(ordenId);
         if (!orden) {
-            await logger.logCriticalError('MP_ORDER_NOT_FOUND', `Orden ${ordenId} no encontrada`, {
+            logger.error('MP_ORDER_NOT_FOUND', `Orden ${ordenId} no encontrada`, {
                 ordenId
             });
             return res.status(404).json({ error: 'Orden no encontrada' });
         }
 
-        // Construir items para Mercado Pago
-        const items = orden.items.map(item => ({
-            title: item.nombre,
-            quantity: item.cantidad,
-            unit_price: item.precioUnitario,
-            currency_id: 'ARS'
-        }));
-
-        // Crear preferencia
-        const preference = {
-            items: items,
-            payer: {
-                name: orden.datosComprador.nombre,
-                email: orden.datosComprador.email,
-                phone: {
-                    area_code: '54',
-                    number: orden.datosComprador.whatsapp.replace(/\D/g, '') // Solo números
-                }
-            },
-            back_urls: {
-                success: `${process.env.FRONTEND_URL}/pedido-confirmado?order_id=${ordenId}`,
-                pending: `${process.env.FRONTEND_URL}/pedido-pendiente?order_id=${ordenId}`,
-                failure: `${process.env.FRONTEND_URL}/pedido-fallido?order_id=${ordenId}`
-            },
-            notification_url: `${process.env.BACKEND_URL}/api/mercadopago/webhook`,
-            external_reference: ordenId.toString(),
-            auto_return: 'approved',
-            binary_mode: true // Solo aprobado o rechazado
-        };
-
-        // Llamar API de Mercado Pago
-        const response = await axios.post(
-            `${MP_API_URL}/checkout/preferences`,
-            preference,
-            {
-                headers: {
-                    'Authorization': `Bearer ${MP_ACCESS_TOKEN}`,
-                    'Content-Type': 'application/json'
-                },
-                timeout: 8000
-            }
-        );
-
-        const { id, init_point } = response.data;
-
-        // Guardar IDs en la orden
-        orden.mercadoPagoId = id;
-        orden.mercadoPagoCheckoutUrl = init_point;
-        await orden.save();
+        // ✅ Usar servicio optimizado
+        const { preferenceId, initPoint, sandboxInitPoint } = await MercadoPagoService.createPreference(orden);
 
         // Log de auditoría
-        await logger.logPaymentOperation('MP_PREFERENCE_CREATED', orden._id, {
+        logger.info('MP_PREFERENCE_CREATED', {
+            orderId: orden._id,
             orderNumber: orden.orderNumber,
-            preferenceId: id,
+            preferenceId,
             total: orden.total,
             itemsCount: orden.items.length
         });
 
-        console.log('✅ Preferencia MP creada:', id, `para orden ${orden.orderNumber}`);
+        console.log('✅ Preferencia MP creada:', preferenceId, `para orden ${orden.orderNumber}`);
 
         res.json({
             ok: true,
-            checkoutUrl: init_point,
-            preferenceId: id
+            checkoutUrl: initPoint,
+            sandboxCheckoutUrl: sandboxInitPoint,
+            preferenceId
         });
 
     } catch (err) {
         console.error('❌ Error creando preferencia MP:', err.message);
-        await logger.logCriticalError('MP_PREFERENCE_ERROR', err.message, {
+        logger.error('MP_PREFERENCE_ERROR', {
+            message: err.message,
             ordenId: req.body.ordenId,
             stack: err.stack
         });

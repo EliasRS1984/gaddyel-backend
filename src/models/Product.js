@@ -11,14 +11,38 @@ const productoSchema = new mongoose.Schema(
     descripcion: { type: String, required: true },
     descripcionCompleta: { type: String, required: true },
     imagenSrc: { type: String },
-    imagenes: [imagenSchema],
-    destacado: { type: Boolean, default: false },
-    categoria: { type: String, required: true },
+    imagenes: {
+      type: [imagenSchema],
+      validate: {
+        validator: function(arr) {
+          return arr.length <= 20; // ✅ Máximo 20 imágenes
+        },
+        message: 'Un producto no puede tener más de 20 imágenes'
+      }
+    },
+    destacado: { type: Boolean, default: false, index: true },
+    categoria: { type: String, required: true, index: true },
     material: { type: String },
-    tamanos: [{ type: String }],
-    colores: [{ type: String }],
+    tamanos: {
+      type: [{ type: String }],
+      validate: {
+        validator: function(arr) {
+          return arr.length <= 15;
+        },
+        message: 'Máximo 15 tamaños'
+      }
+    },
+    colores: {
+      type: [{ type: String }],
+      validate: {
+        validator: function(arr) {
+          return arr.length <= 30;
+        },
+        message: 'Máximo 30 colores'
+      }
+    },
     personalizable: { type: Boolean, default: false },
-    precio: { type: Number, required: true },
+    precio: { type: Number, required: true, index: true },
     cantidadUnidades: { type: Number, default: 1 },
     propiedadesPersonalizadas: { type: Map, of: String, default: {} },
   },
@@ -26,5 +50,11 @@ const productoSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+// ✅ ÍNDICES para optimizar queries frecuentes
+productoSchema.index({ destacado: 1, createdAt: -1 }); // Productos destacados ordenados por fecha
+productoSchema.index({ categoria: 1, precio: 1 }); // Filtrar por categoría y rango de precio
+productoSchema.index({ nombre: 'text', descripcion: 'text' }); // Búsqueda full-text
+productoSchema.index({ createdAt: -1 }); // Ordenar por fecha más reciente
 
 export const Producto = mongoose.model("Producto", productoSchema);

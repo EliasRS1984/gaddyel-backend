@@ -2,15 +2,26 @@
   "name": "gaddyel-backend",
   "version": "1.0.0",
   "type": "module",
-  "main": "index.js",
+  "main": "src/index.js",
+  "description": "Backend API para e-commerce Gaddyel con gestión de productos, órdenes y pagos",
+  "author": "Gaddyel Team",
+  "license": "MIT",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "dev": "nodemon src/index.js",
+    "create-admin": "node src/scripts/createAdmin.js",
+    "list-admins": "node src/scripts/listAdmins.js",
+    "change-password": "node src/scripts/changePassword.js",
+    "import-products": "node src/scripts/importarProductos.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "keywords": [
+    "ecommerce",
+    "api",
+    "rest",
+    "express",
+    "mongodb",
+    "mercadopago"
+  ],
   "dependencies": {
     "axios": "^1.13.2",
     "bcryptjs": "^3.0.3",
@@ -25,10 +36,13 @@
     "helmet": "^8.1.0",
     "joi": "^18.0.1",
     "jsonwebtoken": "^9.0.2",
+    "mercadopago": "^2.11.0",
     "mongoose": "^8.19.3",
     "multer": "^2.0.2",
     "multer-storage-cloudinary": "^2.2.1",
-    "xss-clean": "^0.1.4"
+    "winston": "^3.11.0",
+    "xss-clean": "^0.1.4",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"

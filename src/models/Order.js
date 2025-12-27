@@ -5,8 +5,7 @@ const orderSchema = new mongoose.Schema({
     orderNumber: {
         type: String,
         unique: true,
-        sparse: true,
-        index: true
+        sparse: true
     },
     
     // Referencias
@@ -86,19 +85,17 @@ const orderSchema = new mongoose.Schema({
     estadoPago: {
         type: String,
         enum: ['pending', 'approved', 'rejected', 'cancelled', 'expired', 'refunded'],
-        default: 'pending',
-        index: true
+        default: 'pending'
     },
     
     // Estados del pedido (Interno)
     estadoPedido: {
         type: String,
         enum: ['pendiente', 'en_produccion', 'listo', 'enviado', 'entregado', 'cancelado'],
-        default: 'pendiente',
-        index: true
+        default: 'pendiente'
     },
     
-    // Integración Mercado Pago
+    // ===== MERCADO PAGO (LEGACY - Mantener por compatibilidad) =====
     mercadoPagoId: {
         type: String,
         unique: true,
@@ -114,6 +111,66 @@ const orderSchema = new mongoose.Schema({
     // URL de checkout de Mercado Pago
     mercadoPagoCheckoutUrl: {
         type: String
+    },
+    
+    // ===== PAYMENT (NUEVO - Sistema 2025) =====
+    payment: {
+        // Información de Mercado Pago
+        mercadoPago: {
+            // Preferencia de pago
+            preferenceId: {
+                type: String,
+                sparse: true,
+                index: true
+            },
+            initPoint: String,
+            sandboxInitPoint: String,
+            
+            // Información del pago
+            paymentId: {
+                type: String,
+                sparse: true,
+                index: true
+            },
+            status: {
+                type: String,
+                enum: ['pending', 'approved', 'authorized', 'in_process', 'in_mediation', 
+                       'rejected', 'cancelled', 'refunded', 'charged_back'],
+                default: 'pending'
+            },
+            statusDetail: String,
+            
+            // Método de pago
+            paymentType: String, // 'account_money', 'credit_card', 'debit_card', etc.
+            paymentMethod: String, // 'visa', 'master', 'mercadopago', etc.
+            
+            // Montos
+            transactionAmount: Number,
+            netAmount: Number,
+            
+            // Cuotas
+            installments: Number,
+            
+            // Fechas
+            createdAt: Date,
+            lastUpdate: Date,
+            approvedAt: Date,
+            
+            // Comprador en MP
+            payerEmail: String,
+            payerId: String,
+            
+            // Información adicional
+            authorizationCode: String,
+            merchantAccountId: String
+        },
+        
+        // Método de pago general
+        method: {
+            type: String,
+            enum: ['mercadopago', 'transferencia', 'efectivo', 'otro'],
+            default: 'mercadopago'
+        }
     },
     
     // Método de pago (extraído del webhook de MP)
@@ -292,5 +349,11 @@ orderSchema.methods.isRetrasado = function() {
     const hoy = new Date();
     return hoy > this.fechaEnvioEstimada && this.estadoPedido !== 'enviado' && this.estadoPedido !== 'entregado';
 };
+
+// ✅ Índices compuestos para mejorar performance de queries
+orderSchema.index({ clienteId: 1, createdAt: -1 }); // Query común: órdenes por cliente
+orderSchema.index({ estadoPago: 1 }); // Filtrado por estado de pago
+orderSchema.index({ estadoPedido: 1, createdAt: -1 }); // Filtrado por estado de pedido
+// orderNumber ya tiene unique: true que crea índice automático
 
 export default mongoose.model('Order', orderSchema);

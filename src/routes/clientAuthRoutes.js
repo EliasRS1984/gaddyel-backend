@@ -35,15 +35,11 @@ router.post('/registro', async (req, res) => {
             });
         }
 
-        // Encriptar contraseña
-        const salt = await bcrypt.genSalt(10);
-        const passwordHash = await bcrypt.hash(password, salt);
-
-        // Crear nuevo cliente
+        // Crear nuevo cliente (el pre-save hook hasheará la contraseña automáticamente)
         const nuevoCliente = new Client({
             nombre,
             email: email.toLowerCase(),
-            password: passwordHash,
+            password: password, // Sin hashear - el pre-save hook lo hará
             whatsapp,
             activo: true
         });
@@ -83,7 +79,8 @@ router.post('/registro', async (req, res) => {
 
     } catch (error) {
         console.error('❌ Error en registro:', error.message);
-        res.status(500).json({ error: 'Error al crear la cuenta' });
+        console.error('   Stack:', error.stack);
+        res.status(500).json({ error: 'Error al crear la cuenta: ' + error.message });
     }
 });
 

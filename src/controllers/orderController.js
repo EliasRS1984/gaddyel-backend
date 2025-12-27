@@ -2,404 +2,396 @@ import Order from '../models/Order.js';
 import Client from '../models/Client.js';
 import { Producto } from '../models/Product.js';
 import AdminUser from '../models/AdminUser.js';
+import { validateObjectId, validateObjectIdArray } from '../validators/noSqlInjectionValidator.js';
 
 /**
- * Crear nueva orden (público)
- * Frontend envía: items, datos del cliente
+ * ✅ Crear nueva orden con validación segura
+ * Requiere: items validados, cliente con nombre y email
+ * Retorna: orden creada con totales recalculados en servidor
  */
-export const createOrder = async (req, res) => {
+export const createOrder = async (req, res, next) => {
     try {
         console.log('📨 POST /pedidos/crear - Orden recibida');
-        console.log('Body:', JSON.stringify(req.body, null, 2));
         
-        // Obtener datos del request
-        const { items, cliente, clienteId } = req.body;
+        const { items, cliente, clienteId, total: totalRecibido } = req.body;
         
-        // Validación básica
+        // ✅ Validación básica
         if (!items || !Array.isArray(items) || items.length === 0) {
             return res.status(400).json({ error: 'Items es requerido y debe ser un array' });
         }
-        if (!cliente || !cliente.nombre || !cliente.email) {
-            return res.status(400).json({ error: 'Cliente es requerido con nombre y email' });
+        if (!cliente || typeof cliente !== 'object') {
+            return res.status(400).json({ error: 'Cliente debe ser objeto' });
         }
 
-        console.log('✅ Validación básica pasada');
-        const { items: itemsList, cliente: clienteData, cantidadProductos, subtotal: subtotalRecibido, costoEnvio: costoEnvioRecibido } = req.body;
+        const { nombre, email, whatsapp, domicilio, localidad, provincia, codigoPostal } = cliente;
+        
+        // ✅ Validar datos del cliente
+        if (!nombre || typeof nombre !== 'string' || nombre.length < 2) {
+            return res.status(400).json({ error: 'Nombre debe ser string de 2+ caracteres' });
+        }
+        if (!email || !email.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
+            return res.status(400).json({ error: 'Email inválido' });
+        }
 
-        // Validar y obtener productos
+        // ✅ Validar y normalizar items con protección NoSQL Injection
+        const validatedItems = items.map((item, idx) => {
+            try {
+                const productoId = validateObjectId(item.productoId, `items[${idx}].productoId`);
+                const cantidad = Number(item.cantidad);
+                
+                if (!Number.isInteger(cantidad) || cantidad < 1) {
+                    throw new Error(`items[${idx}].cantidad debe ser entero positivo`);
+                }
+                
+                return { productoId, cantidad };
+            } catch (error) {
+                throw new Error(`items[${idx}]: ${error.message}`);
+            }
+        });
+
+        console.log('✅ Validación de items pasada');
+
+        // ✅ Obtener productos con UNA sola query (evita N queries)
+        const productIds = validatedItems.map(item => item.productoId);
+        const productos = await Producto.find({ 
+            _id: { $in: productIds } 
+        }).lean(); // ✅ .lean() para mejor performance
+
+        if (productos.length !== productIds.length) {
+            return res.status(404).json({ error: 'Uno o más productos no encontrados' });
+        }
+
+        // ✅ Validar productos y calcular totales EN SERVIDOR (sin restricciones de stock)
         const productosValidados = [];
-        let total = 0;
-        let subtotal = 0;
+        let subtotalCalculado = 0;
 
-        for (const item of itemsList) {
-            const producto = await Producto.findById(item.productoId);
+        for (const item of validatedItems) {
+            const producto = productos.find(p => p._id.toString() === item.productoId);
             
             if (!producto) {
-                console.error('❌ Producto no encontrado:', item.productoId);
-                return res.status(404).json({ 
-                    error: `Producto ${item.productoId} no encontrado` 
-                });
+                return res.status(404).json({ error: `Producto ${item.productoId} no encontrado` });
             }
 
-            // Validar stock
-            if (producto.stock < item.cantidad) {
-                console.warn('⚠️  Stock insuficiente:', {
-                    productoId: producto._id,
-                    productoNombre: producto.nombre,
-                    required: item.cantidad,
-                    available: producto.stock
-                });
-                return res.status(400).json({ 
-                    error: `Stock insuficiente para "${producto.nombre}". Disponible: ${producto.stock}` 
-                });
-            }
-
+            // ℹ️ Cada solicitud (item del carrito) tiene su cantidad independiente
+            // Sin validación de stock global - la cantidad es parte de la solicitud específica
             const itemSubtotal = producto.precio * item.cantidad;
-            const cantidadUnidadesPorItem = producto.cantidadUnidades || 1;
-            
-            total += itemSubtotal;
-            subtotal += itemSubtotal;
+            subtotalCalculado += itemSubtotal;
 
             productosValidados.push({
                 productoId: producto._id,
                 nombre: producto.nombre,
                 cantidad: item.cantidad,
-                cantidadUnidades: cantidadUnidadesPorItem,
                 precioUnitario: producto.precio,
                 subtotal: itemSubtotal
             });
         }
 
-        // Calcular cantidad de solicitudes (TOTAL de veces que se agregaron productos)
-        const cantidadSolicitudes = itemsList.reduce((sum, item) => sum + item.cantidad, 0);
-        console.log(`📦 Cantidad de solicitudes: ${cantidadSolicitudes}`);
-
-        // Calcular costo de envío basado en cantidad de solicitudes (REGLA DE NEGOCIO)
-        const envioGratis = cantidadSolicitudes >= 3;  // 3 o más solicitudes = gratis
+        // ✅ Calcular costo de envío basado en cantidad (REGLA DE NEGOCIO)
+        const cantidadProductos = validatedItems.reduce((sum, item) => sum + item.cantidad, 0);
+        const envioGratis = cantidadProductos >= 3;
         const costoEnvioCalculado = envioGratis ? 0 : 12000;
-        
-        // Validar contra el valor recibido del frontend (seguridad)
-        if (costoEnvioRecibido !== undefined && costoEnvioRecibido !== costoEnvioCalculado) {
-            console.warn(`⚠️ Costo de envío recibido (${costoEnvioRecibido}) no coincide con calculado (${costoEnvioCalculado}). Usando calculado.`);
+        const totalCalculado = subtotalCalculado + costoEnvioCalculado;
+
+        console.log(`💰 Subtotal: ${subtotalCalculado}, Envío: ${costoEnvioCalculado}, Total: ${totalCalculado}`);
+
+        // ✅ CRÍTICO: Validar que cliente no manipuló totales (previene fraude)
+        if (totalRecibido !== undefined && Math.abs(totalRecibido - totalCalculado) > 1) {
+            console.warn('⚠️ FRAUDE DETECTADO - Total manipulado:', {
+                clientRecibido: totalRecibido,
+                servidorCalculado: totalCalculado,
+                diferencia: Math.abs(totalRecibido - totalCalculado)
+            });
+            
+            return res.status(400).json({ 
+                error: 'Total no coincide con cálculo servidor',
+                serverTotal: totalCalculado,
+                clientTotal: totalRecibido
+            });
         }
 
-        const costoEnvioFinal = costoEnvioCalculado;
-        const totalFinal = subtotal + costoEnvioFinal;
-
-        console.log(`💰 Subtotal: ${subtotal}`);
-        console.log(`📦 Envío: ${costoEnvioFinal} (${envioGratis ? 'GRATIS' : '$12.000'})`);
-        console.log(`💵 Total: ${totalFinal}`);
-
-        // Encontrar o crear cliente
+        // ✅ Validar o crear cliente autenticado
         let clienteDoc;
         
-        // Si viene clienteId (usuario autenticado), usar ese cliente
         if (clienteId) {
+            // ✅ Validar clienteId
+            validateObjectId(clienteId, 'clienteId');
             clienteDoc = await Client.findById(clienteId);
             
             if (!clienteDoc) {
-                console.error('❌ Cliente autenticado no encontrado:', clienteId);
-                return res.status(404).json({ error: 'Cliente no encontrado' });
+                return res.status(404).json({ error: 'Cliente autenticado no encontrado' });
             }
             
-            // Actualizar datos del cliente con la información del checkout
-            clienteDoc.nombre = clienteData.nombre;
-            clienteDoc.whatsapp = clienteData.whatsapp || clienteDoc.whatsapp;
-            
-            // Actualizar campos nuevos (domicilio, localidad, provincia)
-            if (clienteData.domicilio) clienteDoc.domicilio = clienteData.domicilio;
-            if (clienteData.localidad) clienteDoc.localidad = clienteData.localidad;
-            if (clienteData.provincia) clienteDoc.provincia = clienteData.provincia;
-            if (clienteData.codigoPostal) clienteDoc.codigoPostal = clienteData.codigoPostal;
-            
-            // Mantener campos legacy para compatibilidad
-            if (clienteData.direccion) clienteDoc.direccion = clienteData.direccion;
-            if (clienteData.ciudad) clienteDoc.ciudad = clienteData.ciudad;
-            
+            // ✅ Actualizar datos del cliente
+            clienteDoc.nombre = nombre;
+            clienteDoc.email = email;
+            clienteDoc.whatsapp = whatsapp || clienteDoc.whatsapp;
+            if (domicilio) clienteDoc.domicilio = domicilio;
+            if (localidad) clienteDoc.localidad = localidad;
+            if (provincia) clienteDoc.provincia = provincia;
+            if (codigoPostal) clienteDoc.codigoPostal = codigoPostal;
             clienteDoc.ultimaActividad = new Date();
-            await clienteDoc.save();
             
+            await clienteDoc.save();
             console.log('✅ Cliente autenticado actualizado:', clienteDoc._id);
         } else {
-            // Si no viene clienteId, buscar por email o crear nuevo (checkout de invitado)
-            clienteDoc = await Client.findOne({ email: clienteData.email });
+            // ✅ Búsqueda o creación de cliente invitado
+            clienteDoc = await Client.findOne({ email });
             
             if (!clienteDoc) {
                 clienteDoc = new Client({
-                    nombre: clienteData.nombre,
-                    email: clienteData.email,
-                    whatsapp: clienteData.whatsapp || '',
-                    domicilio: clienteData.domicilio || clienteData.direccion || '',
-                    localidad: clienteData.localidad || clienteData.ciudad || '',
-                    provincia: clienteData.provincia || '',
-                    direccion: clienteData.direccion || '',
-                    ciudad: clienteData.ciudad || '',
-                    codigoPostal: clienteData.codigoPostal || ''
+                    nombre,
+                    email,
+                    whatsapp: whatsapp || '',
+                    domicilio: domicilio || '',
+                    localidad: localidad || '',
+                    provincia: provincia || '',
+                    codigoPostal: codigoPostal || ''
                 });
                 await clienteDoc.save();
                 console.log('✅ Cliente nuevo creado (invitado):', clienteDoc._id);
             } else {
-                // Actualizar datos si existen
-                clienteDoc.nombre = clienteData.nombre;
-                clienteDoc.whatsapp = clienteData.whatsapp || clienteDoc.whatsapp;
-                
-                // Actualizar campos nuevos (domicilio, localidad, provincia)
-                if (clienteData.domicilio) clienteDoc.domicilio = clienteData.domicilio;
-                if (clienteData.localidad) clienteDoc.localidad = clienteData.localidad;
-                if (clienteData.provincia) clienteDoc.provincia = clienteData.provincia;
-                if (clienteData.codigoPostal) clienteDoc.codigoPostal = clienteData.codigoPostal;
-                
-                // Mantener campos legacy
-                if (clienteData.direccion) clienteDoc.direccion = clienteData.direccion;
-                if (clienteData.ciudad) clienteDoc.ciudad = clienteData.ciudad;
-                
                 clienteDoc.ultimaActividad = new Date();
                 await clienteDoc.save();
-                console.log('✅ Cliente existente actualizado (invitado):', clienteDoc._id);
+                console.log('✅ Cliente existente encontrado:', clienteDoc._id);
             }
         }
 
-        // Crear orden primero sin orderNumber
-        const ordenTemp = new Order({
+        // ✅ Crear orden con totales recalculados
+        const orden = new Order({
             clienteId: clienteDoc._id,
             items: productosValidados,
-            total: totalFinal,
-            subtotal: subtotal,
-            costoEnvio: costoEnvioFinal,
-            cantidadProductos: cantidadSolicitudes,  // Guardar cantidad de solicitudes (items.length)
-            impuestos: 0,
+            subtotal: subtotalCalculado,
+            costoEnvio: costoEnvioCalculado,
+            total: totalCalculado,
+            cantidadProductos,
+            estadoPago: 'pending',
+            estadoPedido: 'pendiente',
             datosComprador: {
-                nombre: clienteData.nombre,
-                email: clienteData.email,
-                whatsapp: clienteData.whatsapp || '',
-                direccion: clienteData.direccion,
-                ciudad: clienteData.ciudad,
-                provincia: clienteData.provincia || '',
-                codigoPostal: clienteData.codigoPostal,
-                notasAdicionales: clienteData.notasAdicionales || ''
-            },
-            diasProduccion: 20, // Por defecto 20 días
-            fechaEnvioEstimada: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000), // Calcula automáticamente +20 días
-            historialEstados: [
-                {
-                    estado: 'pendiente',
-                    nota: 'Orden creada, esperando pago'
-                }
-            ]
+                nombre,
+                email,
+                whatsapp: whatsapp || '',
+                direccion: domicilio || '',
+                ciudad: localidad || '',
+                provincia: provincia || '',
+                codigoPostal: codigoPostal || '',
+                notasAdicionales: cliente.notasAdicionales || ''
+            }
         });
 
-        await ordenTemp.save();
+        await orden.save();
 
-        // Generar orderNumber basado en el ID de la orden (determinístico)
-        const orderNumber = 'G-' + ordenTemp._id.toString().slice(-6).toUpperCase();
-        ordenTemp.orderNumber = orderNumber;
-        await ordenTemp.save();
-
-        const orden = ordenTemp;
+        // ✅ Generar número de orden
+        const orderNumber = 'G-' + orden._id.toString().slice(-6).toUpperCase();
+        orden.orderNumber = orderNumber;
+        await orden.save();
 
         console.log('✅ Orden creada:', orden._id, `(${orderNumber})`);
-        console.log('📦 Productos en orden:', productosValidados.length);
 
-        // Actualizar historial del cliente y estadísticas
-        try {
-            await Client.updateOne(
-                { _id: clienteDoc._id },
-                {
-                    $push: { historialPedidos: orden._id },
-                    $inc: { totalPedidos: 1, totalGastado: orden.total },
-                    $set: { ultimaActividad: new Date() }
-                }
-            );
-            // Añadir dirección usada en este checkout
-            const direccionActual = {
-                domicilio: clienteData.domicilio || clienteData.direccion || '',
-                localidad: clienteData.localidad || clienteData.ciudad || '',
-                provincia: clienteData.provincia || '',
-                codigoPostal: clienteData.codigoPostal || '',
-                predeterminada: clienteDoc.direcciones.length === 0, // Primera dirección es predeterminada
-                etiqueta: clienteDoc.direcciones.length === 0 ? 'Principal' : 'Envío '
-            };
-            if (direccionActual.domicilio) {
-                await Client.updateOne(
-                    { _id: clienteDoc._id },
-                    { $addToSet: { direcciones: direccionActual } }
-                );
-            }
-        } catch (e) {
-            console.warn('⚠️ No se pudo actualizar historial del cliente:', e.message);
-        }
-
-        // Respuesta con información completa de envío Y datos del comprador
         res.status(201).json({
             ok: true,
             ordenId: orden._id,
-            orderNumber: orden.orderNumber,
-            mensaje: 'Orden creada exitosamente',
-            subtotal: orden.subtotal,
-            costoEnvio: orden.costoEnvio,
-            cantidadProductos: orden.cantidadProductos,
-            total: orden.total,
-            items: productosValidados,
-            datosComprador: orden.datosComprador,
-            envio: {
-                diasProduccion: orden.diasProduccion,
-                fechaEnvioEstimada: orden.fechaEnvioEstimada,
-                mensaje: `Tu pedido será enviado en aproximadamente ${orden.diasProduccion} días corridos`
-            }
+            orderNumber,
+            subtotal: subtotalCalculado,
+            costoEnvio: costoEnvioCalculado,
+            total: totalCalculado,
+            cantidadProductos
         });
-
-    } catch (err) {
-        console.error('❌ Error creando orden:', err.message);
-        res.status(500).json({ error: 'Error al crear la orden' });
+    } catch (error) {
+        next(error);
     }
 };
 
 /**
- * Obtener todas las órdenes (admin)
+ * ✅ Obtener todas las órdenes (admin) con filtros y paginación
+ * Uso de .lean() para mejor performance
  */
-export const getOrders = async (req, res) => {
+export const getOrders = async (req, res, next) => {
     try {
         console.log('📨 GET /pedidos - Solicitando lista de órdenes');
         console.log('🔐 Usuario autenticado:', req.user?.id || 'Desconocido');
         console.log('📋 Filtros:', req.query);
         
-        // Construir filtro dinámico
+        const { estadoPago, estadoPedido, fechaDesde, fechaHasta, page = 1, limit = 20 } = req.query;
+        
+        // ✅ Construir filtro dinámico con validación
         const filter = {};
         
-        // Filtrar por estado de pago si se proporciona
-        if (req.query.estadoPago) {
-            filter.estadoPago = req.query.estadoPago;
+        if (estadoPago && ['pending', 'approved', 'refunded', 'cancelled'].includes(estadoPago)) {
+            filter.estadoPago = estadoPago;
         }
         
-        // Filtrar por estado de pedido si se proporciona
-        if (req.query.estadoPedido) {
-            filter.estadoPedido = req.query.estadoPedido;
+        if (estadoPedido && ['pendiente', 'procesando', 'enviado', 'entregado', 'cancelado'].includes(estadoPedido)) {
+            filter.estadoPedido = estadoPedido;
         }
         
-        // Filtrar por rango de fechas si se proporciona
-        if (req.query.fechaDesde || req.query.fechaHasta) {
-            filter.fechaCreacion = {};
-            if (req.query.fechaDesde) {
-                filter.fechaCreacion.$gte = new Date(req.query.fechaDesde);
+        if (fechaDesde || fechaHasta) {
+            filter.createdAt = {};
+            if (fechaDesde) {
+                try {
+                    filter.createdAt.$gte = new Date(fechaDesde);
+                } catch (e) {
+                    return res.status(400).json({ error: 'fechaDesde inválida' });
+                }
             }
-            if (req.query.fechaHasta) {
-                filter.fechaCreacion.$lte = new Date(req.query.fechaHasta);
+            if (fechaHasta) {
+                try {
+                    filter.createdAt.$lte = new Date(fechaHasta);
+                } catch (e) {
+                    return res.status(400).json({ error: 'fechaHasta inválida' });
+                }
             }
         }
         
+        // ✅ Paginación segura
+        const pageNum = Math.max(1, parseInt(page) || 1);
+        const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
+        const skip = (pageNum - 1) * limitNum;
+        
+        // ✅ Usar .lean() para lectura rápida (sin populate para evitar errores de referencia)
         const ordenes = await Order.find(filter)
-            .populate('clienteId', 'nombre email whatsapp')
-            .populate('items.productoId', 'nombre precio')
-            .sort({ fechaCreacion: -1 })
-            .limit(200);
+            .lean()
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limitNum);
 
-        console.log(`✅ ${ordenes.length} órdenes encontradas`);
+        const total = await Order.countDocuments(filter);
+
+        console.log(`✅ ${ordenes.length} órdenes encontradas de ${total} total`);
 
         res.json({ 
             success: true,
             data: ordenes,
-            cantidad: ordenes.length
+            pagination: {
+                page: pageNum,
+                limit: limitNum,
+                total,
+                pages: Math.ceil(total / limitNum)
+            }
         });
 
-    } catch (err) {
-        console.error('❌ Error obteniendo órdenes:', err.message);
-        console.error('Stack:', err.stack);
-        res.status(500).json({ 
-            error: 'Error al obtener órdenes',
-            mensaje: err.message 
-        });
+    } catch (error) {
+        next(error);
     }
 };
 
 /**
- * Obtener orden por ID (admin)
+ * ✅ Obtener orden por ID (admin) con autorización
+ * Usa .lean() para lectura optimizada
  */
-export const getOrderById = async (req, res) => {
+export const getOrderById = async (req, res, next) => {
     try {
         const { id } = req.params;
         console.log(`📨 GET /pedidos/${id}`);
 
+        // ✅ Validar ObjectId
+        validateObjectId(id, 'id');
+
         const orden = await Order.findById(id)
-            .populate('clienteId')
-            .populate('items.productoId');
+            .lean();
 
         if (!orden) {
             return res.status(404).json({ error: 'Orden no encontrada' });
         }
 
+        console.log(`✅ Orden encontrada: ${orden.orderNumber}`);
         res.json(orden);
 
-    } catch (err) {
-        console.error('❌ Error obteniendo orden:', err.message);
-        res.status(500).json({ 
-            error: 'Error al obtener orden',
-            mensaje: err.message 
-        });
+    } catch (error) {
+        next(error);
     }
 };
 
 /**
- * Actualizar estado de orden (admin)
+ * ✅ Actualizar estado de orden (admin)
+ * Valida cambios de estado y registra historial
  */
-export const updateOrderStatus = async (req, res) => {
+export const updateOrderStatus = async (req, res, next) => {
     try {
         const { id } = req.params;
-        const { estadoPedido, notasAdmin, fechaEntregaEstimada } = req.body;
+        const { estadoPedido, notasAdmin } = req.body;
 
         console.log(`📨 PUT /pedidos/${id}/estado - Nuevo estado: ${estadoPedido}`);
 
+        // ✅ Validar ObjectId
+        validateObjectId(id, 'id');
+
+        // ✅ Validar estado permitido
+        const estadosValidos = ['pendiente', 'procesando', 'enviado', 'entregado', 'cancelado'];
+        if (!estadosValidos.includes(estadoPedido)) {
+            return res.status(400).json({ 
+                error: `Estado inválido. Debe ser uno de: ${estadosValidos.join(', ')}` 
+            });
+        }
+
+        // ✅ Actualizar y registrar en historial
         const orden = await Order.findByIdAndUpdate(
             id,
             {
                 estadoPedido,
-                notasAdmin,
-                fechaEntregaEstimada
+                notasAdmin: notasAdmin || '',
+                $push: {
+                    historialEstados: {
+                        estado: estadoPedido,
+                        nota: notasAdmin || `Estado actualizado a ${estadoPedido}`,
+                        modifiedBy: req.user?.email || 'admin',
+                        timestamp: new Date()
+                    }
+                }
             },
-            { new: true }
-        ).populate('clienteId');
+            { new: true, runValidators: true }
+        ).lean();
 
         if (!orden) {
             return res.status(404).json({ error: 'Orden no encontrada' });
         }
 
+        console.log(`✅ Orden actualizada a estado: ${estadoPedido}`);
         res.json(orden);
 
-    } catch (err) {
-        console.error('❌ Error actualizando orden:', err.message);
-        res.status(500).json({ 
-            error: 'Error al actualizar orden',
-            mensaje: err.message 
-        });
+    } catch (error) {
+        next(error);
     }
 };
 
 /**
- * Obtener órdenes de un cliente
+ * ✅ Obtener órdenes de un cliente autenticado
+ * Solo el cliente puede ver sus propias órdenes (con autorización)
  */
-export const getClientOrders = async (req, res) => {
+export const getClientOrders = async (req, res, next) => {
     try {
         const clienteId = req.params.clienteId;
+        console.log(`📨 GET /clientes/${clienteId}/ordenes`);
+
+        // ✅ Validar ObjectId
+        validateObjectId(clienteId, 'clienteId');
+
+        // ✅ Verificar autorización: cliente solo ve sus propias órdenes (o admin)
+        if (req.user?.clienteId && req.user.clienteId !== clienteId && req.user?.rol !== 'admin') {
+            return res.status(403).json({ error: 'No autorizado para ver estas órdenes' });
+        }
 
         const ordenes = await Order.find({ clienteId })
-            .populate('items.productoId', 'nombre')
-            .sort({ fechaCreacion: -1 });
+            .lean()
+            .sort({ createdAt: -1 });
+
+        console.log(`✅ ${ordenes.length} órdenes encontradas para cliente ${clienteId}`);
 
         res.json({
             ok: true,
-            ordenes,
+            data: ordenes,
             total: ordenes.length
         });
 
-    } catch (err) {
-        console.error('❌ Error obteniendo órdenes del cliente:', err.message);
-        res.status(500).json({ error: 'Error al obtener órdenes' });
+    } catch (error) {
+        next(error);
     }
 };
 
 /**
- * Eliminar una orden (requiere autenticación y contraseña del admin)
+ * ✅ Eliminar una orden (requiere autenticación admin)
+ * Valida autorización y registra en historial (soft delete + historial)
  */
-export const deleteOrder = async (req, res) => {
+export const deleteOrder = async (req, res, next) => {
     try {
         const { id } = req.params;
         const adminUser = req.user; // Del middleware de autenticación
@@ -408,41 +400,51 @@ export const deleteOrder = async (req, res) => {
         console.log('  - Orden ID:', id);
         console.log('  - Admin Usuario:', adminUser?.email || 'Sin email');
 
-        // Obtener la orden
+        // ✅ Validar ObjectId
+        validateObjectId(id, 'id');
+
+        // ✅ Verificar autorización (solo admin)
+        if (adminUser?.rol !== 'admin') {
+            return res.status(403).json({ error: 'Solo administradores pueden eliminar órdenes' });
+        }
+
+        // ✅ Obtener orden antes de eliminar
         const order = await Order.findById(id);
         if (!order) {
-            console.log('❌ Orden no encontrada:', id);
             return res.status(404).json({ error: 'Orden no encontrada' });
         }
 
-        // Registrar la eliminación en el historial
+        // ✅ Actualizar estado a "cancelado" y registrar eliminación en historial
         await Order.findByIdAndUpdate(id, {
+            estadoPedido: 'cancelado',
+            estadoPago: 'cancelled',
             $push: {
                 historialEstados: {
                     estado: 'cancelado',
-                    nota: `Orden eliminada por administrador ${adminUser?.email} - ${new Date().toISOString()}`,
-                    modifiedBy: adminUser?.email || 'admin'
+                    nota: `Orden eliminada por administrador ${adminUser?.email} en ${new Date().toISOString()}`,
+                    modifiedBy: adminUser?.email || 'admin',
+                    timestamp: new Date()
                 }
             }
         });
 
-        // Eliminar la orden
-        await Order.findByIdAndDelete(id);
-
-        console.log('✅ Orden eliminada exitosamente:', id);
+        console.log('✅ Orden cancelada y registrada:', id);
 
         res.json({
             success: true,
-            message: 'Orden eliminada correctamente',
-            ordenId: id
+            message: 'Orden cancelada correctamente',
+            ordenId: id,
+            orderNumber: order.orderNumber
         });
 
-    } catch (err) {
-        console.error('❌ Error eliminando orden:', err.message);
-        res.status(500).json({ error: 'Error al eliminar la orden: ' + err.message });
+    } catch (error) {
+        next(error);
     }
 };
 
+/**
+ * ✅ Exportar default con todos los controladores
+ */
 export default {
     createOrder,
     getOrders,

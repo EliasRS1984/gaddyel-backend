@@ -1,8 +1,10 @@
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
+import mongoSanitize from 'express-mongo-sanitize';
 import { conectarDB } from "./config/db.js";
 import { validateEnv } from "./config/validateEnv.js";
+import logger from "./utils/logger.js";
 import productoRoutes from "./routes/productRoutes.js";
 import uploadRoutes from "./routes/uploadRoutes.js";
 import seedRoutes from "./routes/seedRoutes.js";
@@ -26,55 +28,87 @@ dotenv.config();
 validateEnv();
 
 const app = express();
+app.set('trust proxy', 1);
 
-// CORS
+// ✅ CORS MEJORADO - Whitelist desde env vars
+const getAllowedOrigins = () => {
+    const baseOrigins = [
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'http://localhost:5175',
+        'http://localhost:5176',
+        'http://localhost:3000',
+        'http://127.0.0.1:5173',
+        'http://127.0.0.1:5174',
+    ];
+
+    // Agregar URLs de túneles si existen en .env
+    if (process.env.FRONTEND_URL) {
+        baseOrigins.push(process.env.FRONTEND_URL);
+    }
+
+    // En desarrollo, permitir todos los localhost. En producción, usar env vars
+    if (process.env.NODE_ENV === 'production' && process.env.ALLOWED_ORIGINS) {
+        const prodOrigins = process.env.ALLOWED_ORIGINS
+            .split(',')
+            .map(o => o.trim())
+            .filter(o => o.length > 0);
+        return prodOrigins;
+    }
+
+    return baseOrigins;
+};
+
+const allowedOrigins = getAllowedOrigins();
+
 app.use(cors({
     origin: function (origin, callback) {
-        // Permitir requests sin origin (mobile apps, postman, etc)
+        // Permitir requests sin origin (Postman, mobile apps, etc)
         if (!origin) {
             return callback(null, true);
         }
         
-        // En desarrollo, permitir cualquier puerto localhost
-        if (process.env.NODE_ENV === 'development') {
+        // ✅ En desarrollo, permitir cualquier localhost
+        if (process.env.NODE_ENV !== 'production') {
             if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
                 return callback(null, true);
             }
         }
-        
-        // En producción O desarrollo: permitir localhost con múltiples puertos + dominios configurados
-        const allowedOrigins = [
-            'http://localhost:5173',      // Desarrollo local Vite (puerto predeterminado)
-            'http://localhost:5174',      // Vite segundo puerto (cuando 5173 está ocupado)
-            'http://localhost:5175',      // Vite tercer puerto
-            'http://localhost:5176',      // Vite cuarto puerto
-            'http://localhost:3000',      // React alt port
-            'http://127.0.0.1:5173',      // Localhost IP alternativo
-            'http://127.0.0.1:5174',      // Localhost IP alternativo
-        ];
-        
-        // Agregar dominios desde variable de entorno si existen
-        if (process.env.ALLOWED_ORIGINS) {
-            allowedOrigins.push(...process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()));
+
+        // ✅ Permitir túneles (ngrok, localtunnel) en desarrollo
+        if (process.env.NODE_ENV !== 'production') {
+            if (origin.includes('.ngrok') || origin.includes('.loca.lt') || origin.includes('ngrok-free.dev')) {
+                return callback(null, true);
+            }
         }
         
-        // En producción, permitir cualquier origen (más flexible)
-        if (process.env.NODE_ENV === 'production') {
-            return callback(null, true);
-        }
-        
+        // ✅ Whitelist estricta (desarrollo y producción)
         if (allowedOrigins.includes(origin)) {
             return callback(null, true);
         }
         
-        console.warn(`⚠️  CORS rechazado para origen: ${origin}`);
+        // ❌ RECHAZAR orígenes no autorizados
+        logger.security(`CORS bloqueado: ${origin}`);
         callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
 }));
 
-// cookies
+// ✅ Parsers
 app.use(cookieParser());
+app.use(express.json({ limit: '10kb' }));
+
+// ✅ Sanitización NoSQL
+app.use(mongoSanitize({
+    replaceWith: '_',
+    onSanitize: ({ req, key }) => {
+        logger.security(`Intento de NoSQL injection bloqueado`, { 
+            ip: req?.ip, 
+            key,
+            path: req?.path 
+        });
+    }
+}));
 
 // Seguridad (helmet, sanitizers, rate limits...)
 const { loginLimiter } = applySecurity(app);

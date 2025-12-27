@@ -1,67 +1,254 @@
 # Gaddyel Backend API
 
-Backend para la plataforma de administración de productos Gaddyel. Construido con Node.js, Express, MongoDB y Cloudinary.
+Backend para e-commerce Gaddyel con sistema de gestión de productos, órdenes, autenticación y pagos con Mercado Pago. 
+
+**Stack**: Node.js 22 + Express + MongoDB + ES Modules  
+**Seguridad**: OWASP 2025, JWT, bcrypt, rate limiting  
+**Pagos**: Mercado Pago SDK v2.0+ con webhooks
 
 ---
 
-## 📋 Características
+## 📁 Estructura del Proyecto
 
-- ✅ **Autenticación JWT** con refresh tokens
-- ✅ **CRUD de Productos** completo con validaciones
-- ✅ **Subida de imágenes** a Cloudinary
-- ✅ **Base de datos MongoDB** con Mongoose
-- ✅ **Seguridad** con helmet, rate limiting y sanitización
-- ✅ **Manejo de errores** centralizado
-- ✅ **CORS** configurado para frontend
+```
+gaddyel-backend/
+├── src/                          # 🎯 Código fuente principal (ES Modules)
+│   ├── index.js                  # Entry point del servidor
+│   ├── config/                   # Configuraciones (DB, Cloudinary, JWT)
+│   ├── controllers/              # Lógica de negocio por módulo
+│   ├── models/                   # Schemas de MongoDB (Mongoose)
+│   ├── routes/                   # Definición de endpoints
+│   ├── middleware/               # Auth, validación, seguridad
+│   ├── services/                 # Lógica compleja (MercadoPago, Orders)
+│   ├── scripts/                  # Utilidades CLI (createAdmin, etc)
+│   ├── utils/                    # Helpers (logger, etc)
+│   └── validators/               # Validaciones de esquemas
+├── Data/                         # JSON seeds para productos
+├── logs/                         # Logs de aplicación (gitignored)
+├── uploads/                      # Uploads temporales (gitignored)
+├── archive/                      # Código legacy archivado (gitignored)
+├── .env                          # Variables de entorno (gitignored)
+├── .env.example                  # Template de variables
+└── package.json                  # Dependencias y scripts
+```
+
+**✅ Arquitectura Limpia**: Solo carpeta `src/` con ES Modules, sin duplicaciones legacy.
 
 ---
 
 ## 🚀 Instalación Local
 
 ### Requisitos Previos
-- Node.js v16+ instalado
+- Node.js v22+ (LTS recomendado)
 - npm o yarn
-- Cuenta de MongoDB Atlas
-- Cuenta de Cloudinary
+- MongoDB Atlas (o local)
+- Cloudinary (para imágenes)
+- Mercado Pago (para pagos - opcional en dev)
 
-### 1. Clonar el repositorio
+### 1. Clonar e instalar
 ```bash
 git clone https://github.com/tu-usuario/gaddyel-backend.git
 cd gaddyel-backend
-```
-
-### 2. Instalar dependencias
-```bash
 npm install
 ```
 
-### 3. Configurar variables de entorno
+### 2. Configurar variables de entorno
 ```bash
-# Copiar el archivo de ejemplo
 cp .env.example .env
-
-# Editar .env con tus variables:
-# - MONGO_URI (tu string de conexión MongoDB)
-# - CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
-# - JWT_SECRET (genera uno con: openssl rand -hex 64)
+# Editar .env con tus credenciales
 ```
 
-### 4. Iniciar el servidor en desarrollo
+**Variables críticas**:
+```env
+# Base de datos
+MONGO_URI=mongodb+srv://user:pass@cluster.mongodb.net/gaddyel
+
+# JWT (genera con: node -e "console.log(require('crypto').randomBytes(64).toString('hex'))")
+JWT_SECRET=tu-jwt-secret-256-bits
+JWT_REFRESH_SECRET=tu-refresh-secret-256-bits
+
+# Cloudinary
+CLOUDINARY_CLOUD_NAME=tu-cloud-name
+CLOUDINARY_API_KEY=tu-api-key
+CLOUDINARY_API_SECRET=tu-api-secret
+
+# Frontend (CORS)
+FRONTEND_URL=http://localhost:5173
+ALLOWED_ORIGINS=http://localhost:5173,http://localhost:5174
+
+# Mercado Pago (opcional - usar TEST credentials en desarrollo)
+MERCADO_PAGO_ACCESS_TOKEN=TEST-tu-access-token
+MERCADO_PAGO_PUBLIC_KEY=TEST-tu-public-key
+MERCADO_PAGO_WEBHOOK_SECRET=tu-webhook-secret
+```
+
+### 3. Iniciar el servidor
 ```bash
-npm run dev
+npm run dev        # Desarrollo con nodemon
+npm start          # Producción
 ```
 
-El servidor estará disponible en `http://localhost:5000`
+El servidor estará en `http://localhost:5000`
+
+### 4. (Opcional) Crear usuario administrador
+```bash
+npm run create-admin    # Sigue las instrucciones en consola
+```
 
 ---
 
-## 📊 Estructura del Proyecto
+## 📡 Endpoints Principales
 
+### Autenticación Admin
 ```
-src/
-├── index.js              # Punto de entrada
-├── config/
-│   ├── db.js            # Conexión MongoDB
+POST   /api/admin/auth/login          # Login admin
+POST   /api/admin/auth/refresh        # Refresh token
+POST   /api/admin/auth/logout         # Logout
+```
+
+### Autenticación Cliente
+```
+POST   /api/clientes/auth/registro    # Registro usuario
+POST   /api/clientes/auth/login       # Login usuario
+GET    /api/clientes/auth/perfil      # Perfil (requiere auth)
+```
+
+### Productos
+```
+GET    /api/productos                 # Listar productos
+GET    /api/productos/:id             # Detalle producto
+POST   /api/admin/productos           # Crear (admin)
+PUT    /api/admin/productos/:id       # Actualizar (admin)
+DELETE /api/admin/productos/:id       # Eliminar (admin)
+```
+
+### Órdenes
+```
+POST   /api/pedidos/crear             # Crear orden (público)
+GET    /api/pedidos/cliente           # Órdenes del usuario (auth)
+GET    /api/pedidos/:id               # Detalle orden
+PUT    /api/pedidos/:id/estado        # Actualizar estado (admin)
+```
+
+### Mercado Pago
+```
+POST   /api/mercadopago/preference    # Crear preferencia de pago
+GET    /api/mercadopago/payment/:id   # Info de pago
+POST   /api/webhooks/mercadopago      # Webhook (interno)
+```
+
+### Uploads
+```
+POST   /api/upload                    # Subir imagen (admin)
+```
+
+**Documentación completa**: Ver `COPILOT_DOCUMENTATION.md` y `FLUJO_DATOS.md`
+
+---
+
+## 🧪 Scripts Disponibles
+
+```bash
+npm run dev              # Desarrollo con nodemon
+npm start                # Producción
+npm run create-admin     # Crear usuario admin CLI
+npm run list-admins      # Listar admins existentes
+npm run change-password  # Cambiar contraseña admin
+```
+
+---
+
+## 🔐 Seguridad Implementada
+
+- ✅ **Helmet**: Headers de seguridad HTTP
+- ✅ **CORS**: Whitelist de orígenes permitidos
+- ✅ **Rate Limiting**: express-rate-limit (previene DDoS)
+- ✅ **NoSQL Injection**: express-mongo-sanitize
+- ✅ **JWT**: Tokens con expiración (15min access, 7d refresh)
+- ✅ **bcrypt**: Hashing de contraseñas (12 rounds)
+- ✅ **Validación**: express-validator en todos los endpoints
+- ✅ **HMAC-SHA256**: Validación de webhooks Mercado Pago
+- ✅ **Idempotency Keys**: Prevención de cargos duplicados
+
+---
+
+## 🌐 Despliegue en Producción
+
+### Vercel (Recomendado)
+1. Conectar repositorio en Vercel
+2. Configurar variables de entorno en dashboard
+3. Asegurar `vercel.json` esté configurado:
+```json
+{
+  "version": 2,
+  "builds": [{ "src": "src/index.js", "use": "@vercel/node" }],
+  "routes": [{ "src": "/(.*)", "dest": "src/index.js" }]
+}
+```
+
+### Render / Railway
+Similar a Vercel, configurar:
+- Node.js 22
+- Build command: `npm install`
+- Start command: `npm start`
+- Variables de entorno según `.env.example`
+
+**⚠️ Importante**: En producción usar credenciales PRODUCTION de Mercado Pago.
+
+---
+
+## 📚 Documentación Adicional
+
+- [COPILOT_DOCUMENTATION.md](COPILOT_DOCUMENTATION.md) - Guía de desarrollo
+- [FLUJO_DATOS.md](FLUJO_DATOS.md) - Flujo de datos de la aplicación
+- [MERCADO_PAGO_CONFIG.md](../MERCADO_PAGO_CONFIG.md) - Setup de pagos completo
+
+---
+
+## 🛠️ Tecnologías Utilizadas
+
+| Categoría | Tecnología | Versión |
+|-----------|------------|---------|
+| Runtime | Node.js | 22+ |
+| Framework | Express | 4.x |
+| Base de Datos | MongoDB | 6.x (Atlas) |
+| ODM | Mongoose | 8.x |
+| Autenticación | jsonwebtoken | 9.x |
+| Seguridad | bcryptjs, helmet, cors | Latest |
+| Validación | express-validator | 7.x |
+| Storage | Cloudinary | Latest |
+| Pagos | Mercado Pago SDK | 2.0+ |
+| Rate Limiting | express-rate-limit | 7.x |
+| Sanitización | express-mongo-sanitize | 2.x |
+
+---
+
+## 📞 Soporte
+
+- Issues: GitHub Issues
+- Email: soporte@gaddyel.com
+- Docs: Ver carpeta de documentación
+
+---
+
+## ✅ Estado del Proyecto
+
+**Versión**: 1.0.0  
+**Estado**: ✅ Producción Ready  
+**Última actualización**: Diciembre 2025  
+
+**Features completadas**:
+- ✅ CRUD de productos con variantes
+- ✅ Autenticación dual (Admin + Cliente)
+- ✅ Sistema de órdenes completo
+- ✅ Integración Mercado Pago con webhooks
+- ✅ Cloudinary para imágenes
+- ✅ Seguridad OWASP 2025
+- ✅ Rate limiting y sanitización
+- ✅ Logging estructurado
+
+**Arquitectura limpia**: Sin código legacy, solo ES Modules en `src/`.
+````
 │   └── cloudinary.js    # Configuración Cloudinary
 ├── controllers/
 │   ├── productController.js    # Lógica de productos
