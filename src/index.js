@@ -40,6 +40,7 @@ const getAllowedOrigins = () => {
         'http://localhost:3000',
         'http://127.0.0.1:5173',
         'http://127.0.0.1:5174',
+        'http://127.0.0.1:5175',
     ];
 
     // Agregar URLs de túneles si existen en .env
@@ -47,13 +48,13 @@ const getAllowedOrigins = () => {
         baseOrigins.push(process.env.FRONTEND_URL);
     }
 
-    // En desarrollo, permitir todos los localhost. En producción, usar env vars
-    if (process.env.NODE_ENV === 'production' && process.env.ALLOWED_ORIGINS) {
+    // En producción, agregar ALLOWED_ORIGINS desde env vars
+    if (process.env.ALLOWED_ORIGINS) {
         const prodOrigins = process.env.ALLOWED_ORIGINS
             .split(',')
             .map(o => o.trim())
             .filter(o => o.length > 0);
-        return prodOrigins;
+        return baseOrigins.concat(prodOrigins);
     }
 
     return baseOrigins;
