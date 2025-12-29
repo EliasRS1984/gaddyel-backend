@@ -16,6 +16,7 @@ import orderRoutes from "./routes/orderRoutes.js";
 import mercadoPagoRoutes from "./routes/mercadoPagoRoutes.js";
 import clientRoutes from "./routes/clientRoutes.js";
 import clientAuthRoutes from "./routes/clientAuthRoutes.js";
+import carouselRoutes from "./routes/carouselRoutes.js";
 
 import { applySecurity } from "./middleware/security.js"; 
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -121,6 +122,7 @@ conectarDB();
 app.use("/api/productos", productoRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/productos/seed", seedRoutes);
+app.use("/api/carousel", carouselRoutes); // Carrusel de inicio
 app.use("/api/auth", clientAuthRoutes); // Autenticación de clientes
 
 // ENDPOINT DE PRUEBA - Verificar autenticación

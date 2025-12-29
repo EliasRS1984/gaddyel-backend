@@ -7,10 +7,18 @@ const router = express.Router();
 
 /**
  * POST /api/auth/registro - Registro de nuevo cliente
+ * ⚠️ TEMPORALMENTE DESHABILITADO PARA TESTING
  * Body: { nombre, email, password, whatsapp }
  */
 router.post('/registro', async (req, res) => {
     try {
+        // 🔒 BLOQUEO TEMPORAL - Solo para testing con usuarios existentes
+        return res.status(403).json({ 
+            error: 'El registro de nuevos usuarios está temporalmente deshabilitado. Por favor contacta al administrador.',
+            message: 'Registration is temporarily disabled for testing. Use existing credentials only.'
+        });
+
+        // El código original está abajo pero no se ejecuta
         const { nombre, email, password, whatsapp } = req.body;
 
         // Validación básica
