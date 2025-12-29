@@ -20,8 +20,10 @@ const upload = multer({
  */
 router.get('/signature', verifyToken, (req, res) => {
     try {
+        const folder = req.query.folder || 'Gaddyel-Productos';
+        
         const signatureData = generateCloudinarySignature({
-            folder: 'Gaddyel-Productos',
+            folder: folder,
             resource_type: 'auto',
             type: 'upload'
         });
