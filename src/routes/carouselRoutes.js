@@ -7,18 +7,18 @@ import {
     eliminarImagenCarrusel,
     reordenarImagenesCarrusel
 } from '../controllers/carouselController.js';
-import { verificarToken, verificarAdmin } from '../middleware/authMiddleware.js';
+import authMiddleware from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
 // ✅ Ruta pública - Frontend obtiene imágenes activas
 router.get('/public', obtenerImagenesCarrusel);
 
-// ✅ Rutas protegidas - Solo admin
-router.get('/', verificarToken, verificarAdmin, obtenerTodasImagenesCarrusel);
-router.post('/', verificarToken, verificarAdmin, crearImagenCarrusel);
-router.put('/:id', verificarToken, verificarAdmin, actualizarImagenCarrusel);
-router.delete('/:id', verificarToken, verificarAdmin, eliminarImagenCarrusel);
-router.patch('/reorder', verificarToken, verificarAdmin, reordenarImagenesCarrusel);
+// ✅ Rutas protegidas - Solo admin (requiere autenticación)
+router.get('/', authMiddleware, obtenerTodasImagenesCarrusel);
+router.post('/', authMiddleware, crearImagenCarrusel);
+router.put('/:id', authMiddleware, actualizarImagenCarrusel);
+router.delete('/:id', authMiddleware, eliminarImagenCarrusel);
+router.patch('/reorder', authMiddleware, reordenarImagenesCarrusel);
 
 export default router;
