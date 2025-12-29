@@ -16,31 +16,23 @@ import crypto from 'crypto';
 export const generateCloudinarySignature = (params = {}) => {
     const timestamp = Math.floor(Date.now() / 1000);
     
-    // Construir parámetros firmables (orden alfabético OBLIGATORIO)
-    const signableParams = {
-        timestamp,
-        folder: process.env.CLOUDINARY_FOLDER || 'Gaddyel-Productos',
-        quality: 'auto',
-        fetch_format: 'auto',
-        ...params
-    };
-    
-    // Convertir a query string ordenado alfabéticamente
-    const paramString = Object.keys(signableParams)
-        .sort()
-        .map(key => `${key}=${signableParams[key]}`)
-        .join('&');
+    // ✅ IMPORTANTE: Cloudinary solo requiere `timestamp` en la firma
+    // NO incluir folder, quality, fetch_format, etc. en la firma
+    // La firma se calcula como: sha256(timestamp + API_SECRET)
+    const signableString = `timestamp=${timestamp}`;
     
     // Generar firma con SHA-256
     const signature = crypto
         .createHash('sha256')
-        .update(paramString + process.env.CLOUDINARY_API_SECRET)
+        .update(signableString + process.env.CLOUDINARY_API_SECRET)
         .digest('hex');
+    
+    const folder = params.folder || process.env.CLOUDINARY_FOLDER || 'Gaddyel-Productos';
     
     return {
         timestamp,
         signature,
-        folder: signableParams.folder,
+        folder,
         apiKey: process.env.CLOUDINARY_API_KEY, // ✅ Solo API_KEY, NO SECRET
         cloudName: process.env.CLOUDINARY_CLOUD_NAME
     };
