@@ -31,7 +31,7 @@ validateEnv();
 const app = express();
 app.set('trust proxy', 1);
 
-// ✅ CORS MEJORADO - Whitelist desde env vars
+// ✅ CORS MEJORADO - Whitelist desde env vars + fallback seguro a dominio Vercel
 const getAllowedOrigins = () => {
     const baseOrigins = [
         'http://localhost:5173',
@@ -42,6 +42,11 @@ const getAllowedOrigins = () => {
         'http://127.0.0.1:5173',
         'http://127.0.0.1:5174',
         'http://127.0.0.1:5175',
+    ];
+
+    // Fallback explícito para producción (Vercel)
+    const productionFrontends = [
+        'https://proyecto-gaddyel.vercel.app'
     ];
 
     // Agregar URLs de túneles si existen en .env
@@ -55,10 +60,10 @@ const getAllowedOrigins = () => {
             .split(',')
             .map(o => o.trim())
             .filter(o => o.length > 0);
-        return baseOrigins.concat(prodOrigins);
+        return baseOrigins.concat(productionFrontends, prodOrigins);
     }
 
-    return baseOrigins;
+    return baseOrigins.concat(productionFrontends);
 };
 
 const allowedOrigins = getAllowedOrigins();
