@@ -24,6 +24,7 @@ import verifyToken from "./middleware/authMiddleware.js";
 import cookieParser from 'cookie-parser';
 
 dotenv.config();
+// redeploy trigger: update CORS config timestamp
 
 // ✅ Validar variables de entorno al inicio
 validateEnv();
