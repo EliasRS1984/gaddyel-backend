@@ -121,20 +121,20 @@ class MercadoPagoService {
 
             // ✅ CONFIGURACIÓN DE PREFERENCIA (Estándares MP SDK v2.0+)
             // ⚠️ IMPORTANTE: back_urls y notification_url necesitan URLs PÚBLICAS
-            // MP no puede redirigir a localhost desde su app/web
-            // SOLUCIÓN: Usar ngrok para exponer frontend y backend
+            // MP puede redirigir a Render/Vercel (URLs públicas en producción)
             const preferenceData = {
                 items,
                 payer,
                 back_urls: backUrls,
-                // ⚠️ auto_return requiere URLs públicas para funcionar
-                // Con localhost, MP no puede validar las back_urls
-                // Con ngrok, descomentar: auto_return: 'approved',
+                // ✅ auto_return: Redirige automáticamente después del pago
+                // 'approved': Solo si pago fue exitoso
+                // 'all': Siempre redirige (éxito o fallo)
+                auto_return: 'all', // Redirige en todos los casos
                 external_reference: order._id.toString(),
                 statement_descriptor: 'GADDYEL',
-                // ⚠️ notification_url requiere URL pública
-                // Con ngrok: descomentar y configurar BACKEND_URL en .env
-                // notification_url: `${this.backendUrl}/api/webhooks/mercadopago`,
+                // ✅ notification_url: Webhook que MP llama cuando hay eventos de pago
+                // CRÍTICO: Sin esto, no se actualizan los datos de transacción
+                notification_url: `${this.backendUrl}/api/mercadopago/webhook`,
                 payment_methods: {
                     installments: 12,
                     default_installments: 1
