@@ -82,6 +82,23 @@ class MercadoPagoService {
                 };
             });
 
+            // ✅ AGREGAR COSTO DE ENVÍO COMO ÍTEM (si corresponde)
+            // CRÍTICO: Mercado Pago suma solo los items, no tiene campo shipping separado
+            // Por lo tanto, el envío debe ir como un ítem adicional
+            const costoEnvio = parseFloat(order.costoEnvio) || 0;
+            if (costoEnvio > 0) {
+                items.push({
+                    id: `${order._id.toString()}-shipping`,
+                    title: 'Costo de Envío',
+                    quantity: 1,
+                    unit_price: costoEnvio,
+                    currency_id: 'ARS'
+                });
+                console.log(`   📦 Costo de envío agregado: ARS $${costoEnvio}`);
+            } else {
+                console.log(`   🎉 Envío gratis aplicado (3+ productos)`);
+            }
+
             // ✅ INFORMACIÓN DEL COMPRADOR (solo campos que MP acepta)
             // REQUERIDO: email | OPCIONAL: name, surname
             // ⚠️ NO incluir: phone, address (causa errores en validación)
