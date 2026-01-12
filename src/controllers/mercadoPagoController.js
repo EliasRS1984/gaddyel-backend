@@ -1,8 +1,13 @@
+import axios from 'axios';
 import Order from '../models/Order.js';
 import Client from '../models/Client.js';
 import WebhookLog from '../models/WebhookLog.js';
 import MercadoPagoService from '../services/MercadoPagoService.js';
 import logger from '../utils/logger.js';
+
+// Configuración de Mercado Pago (API)
+const MP_API_URL = 'https://api.mercadopago.com';
+const MP_ACCESS_TOKEN = process.env.MERCADO_PAGO_ACCESS_TOKEN;
 
 /**
  * ✅ CONTROLADOR MERCADO PAGO - REFACTORIZADO 2025
@@ -169,7 +174,30 @@ async function procesarPago(paymentId, webhookLog) {
         orden.estadoPago = statusMapping[payment.status] || 'pending';
         orden.mercadoPagoPaymentId = paymentId;
 
-        // Guardar detalles del pago
+        // ✅ GUARDAR INFORMACIÓN COMPLETA DE TRANSACCIÓN
+        // Esto se mostrará en el admin y en el cliente
+        orden.payment = orden.payment || {};
+        orden.payment.mercadoPago = {
+            preferenceId: payment.preference_id || undefined,
+            paymentId: payment.id,
+            status: payment.status,
+            statusDetail: payment.status_detail,
+            paymentType: payment.payment_type, // 'account_money', 'ticket', 'atm', 'credit_card', etc.
+            paymentMethod: payment.payment_method?.id || 'unknown', // 'visa', 'master', 'amex', etc.
+            transactionAmount: payment.transaction_amount,
+            netAmount: payment.net_amount,
+            installments: payment.installments || 1,
+            createdAt: new Date(payment.date_created),
+            lastUpdate: new Date(payment.last_modified),
+            approvedAt: payment.date_approved ? new Date(payment.date_approved) : null,
+            payerEmail: payment.payer?.email,
+            payerId: payment.payer?.id,
+            authorizationCode: payment.authorization_code,
+            merchantAccountId: payment.merchant_account_id
+        };
+        orden.payment.method = 'mercadopago';
+
+        // Guardar detalles adicionales (legacy - mantener por compatibilidad)
         orden.detallesPago = {
             cardLastFour: payment.card?.last_four_digits,
             cardBrand: payment.card?.issuer?.name,
