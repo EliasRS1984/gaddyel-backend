@@ -138,6 +138,24 @@ app.get("/api/test/auth", (req, res) => {
     res.json({ ok: true, mensaje: 'Endpoint de prueba sin autenticación' });
 });
 
+// ✅ ENDPOINT DE DIAGNÓSTICO - Verificar variables de entorno
+app.get("/api/diagnostico/env", (req, res) => {
+    console.log('🔍 GET /diagnostico/env - Verificar variables de entorno');
+    
+    const diagnosis = {
+        NODE_ENV: process.env.NODE_ENV || 'undefined',
+        MERCADO_PAGO_ACCESS_TOKEN: process.env.MERCADO_PAGO_ACCESS_TOKEN ? '✅ CONFIGURADO' : '❌ NO CONFIGURADO',
+        MERCADO_PAGO_PUBLIC_KEY: process.env.MERCADO_PAGO_PUBLIC_KEY ? '✅ CONFIGURADO' : '❌ NO CONFIGURADO',
+        FRONTEND_URL: process.env.FRONTEND_URL || 'undefined',
+        MONGODB_URI: process.env.MONGODB_URI ? '✅ CONFIGURADO' : '❌ NO CONFIGURADO',
+        JWT_SECRET: process.env.JWT_SECRET ? '✅ CONFIGURADO' : '❌ NO CONFIGURADO',
+        timestamp: new Date().toISOString()
+    };
+    
+    console.log('📋 Diagnosis:', diagnosis);
+    res.json(diagnosis);
+});
+
 app.get("/api/test/auth-protected", (req, res, next) => {
     console.log('📨 GET /test/auth-protected - Endpoint protegido de prueba');
     next();

@@ -200,25 +200,33 @@ export const createOrder = async (req, res, next) => {
             preferenceId = mpResponse.preferenceId;
             console.log('✅ Preferencia MP creada:', preferenceId);
         } catch (mpError) {
-            console.error('⚠️ Error creando preferencia MP, continuando sin redirección:', mpError.message);
+            console.error('❌ Error creando preferencia MP:', mpError.message);
+            console.error('   El pago a través de Mercado Pago NO estará disponible');
+            console.error('   La orden fue creada, pero sin redirección a MP');
             // No fallar si MP falla - continuar con confirmación
         }
 
-        res.status(201).json({
+        const response = {
             ok: true,
             ordenId: orden._id,
             orderNumber,
             subtotal: subtotalCalculado,
             costoEnvio: costoEnvioCalculado,
             total: totalCalculado,
-            cantidadProductos,
-            // ✅ Incluir datos de Mercado Pago si se creó la preferencia
-            ...(checkoutUrl && {
-                checkoutUrl,
-                sandboxCheckoutUrl,
-                preferenceId
-            })
-        });
+            cantidadProductos
+        };
+
+        // ✅ Incluir datos de Mercado Pago si se creó la preferencia
+        if (checkoutUrl) {
+            response.checkoutUrl = checkoutUrl;
+            response.sandboxCheckoutUrl = sandboxCheckoutUrl;
+            response.preferenceId = preferenceId;
+            console.log('📤 Retornando respuesta CON checkoutUrl');
+        } else {
+            console.log('📤 Retornando respuesta SIN checkoutUrl (MP no disponible)');
+        }
+
+        res.status(201).json(response);
     } catch (error) {
         next(error);
     }
