@@ -2,6 +2,7 @@ import Order from '../models/Order.js';
 import Client from '../models/Client.js';
 import { Producto } from '../models/Product.js';
 import AdminUser from '../models/AdminUser.js';
+import MercadoPagoService from '../services/MercadoPagoService.js';
 import { validateObjectId, validateObjectIdArray } from '../validators/noSqlInjectionValidator.js';
 
 /**
@@ -187,6 +188,22 @@ export const createOrder = async (req, res, next) => {
 
         console.log('✅ Orden creada:', orden._id, `(${orderNumber})`);
 
+        // ✅ NUEVO: Crear preferencia de Mercado Pago inmediatamente
+        let checkoutUrl = null;
+        let sandboxCheckoutUrl = null;
+        let preferenceId = null;
+
+        try {
+            const mpResponse = await MercadoPagoService.createPreference(orden);
+            checkoutUrl = mpResponse.initPoint;
+            sandboxCheckoutUrl = mpResponse.sandboxInitPoint;
+            preferenceId = mpResponse.preferenceId;
+            console.log('✅ Preferencia MP creada:', preferenceId);
+        } catch (mpError) {
+            console.error('⚠️ Error creando preferencia MP, continuando sin redirección:', mpError.message);
+            // No fallar si MP falla - continuar con confirmación
+        }
+
         res.status(201).json({
             ok: true,
             ordenId: orden._id,
@@ -194,7 +211,13 @@ export const createOrder = async (req, res, next) => {
             subtotal: subtotalCalculado,
             costoEnvio: costoEnvioCalculado,
             total: totalCalculado,
-            cantidadProductos
+            cantidadProductos,
+            // ✅ Incluir datos de Mercado Pago si se creó la preferencia
+            ...(checkoutUrl && {
+                checkoutUrl,
+                sandboxCheckoutUrl,
+                preferenceId
+            })
         });
     } catch (error) {
         next(error);
