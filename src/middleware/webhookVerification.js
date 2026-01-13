@@ -86,17 +86,24 @@ export const verifyMercadoPagoSignature = (req, res, next) => {
             // Headers de seguridad incompletos
             console.warn('⚠️ Webhook: Headers de seguridad incompletos');
             
-            // Detectar si estamos usando credenciales de TESTING/SANDBOX
-            const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN || '';
-            const isTestingCredentials = accessToken.includes('TEST-');
+            // Detectar modo usando MERCADO_PAGO_MODE (sandbox vs production)
+            const mpMode = (process.env.MERCADO_PAGO_MODE || 'production').toLowerCase();
+            const isSandboxMode = mpMode === 'sandbox' || mpMode === 'test' || mpMode === 'testing';
             
-            if (isTestingCredentials) {
-                console.warn('   ✅ TESTING MODE: Credenciales MP de prueba detectadas');
-                console.warn('   → Mercado Pago sandbox no envía x-timestamp');
-                console.warn('   → Continuando sin validar firma (permitido solo en testing)');
+            // DEBUG: Log para diagnosticar
+            console.log('🔍 [DEBUG] Configuración de Mercado Pago:');
+            console.log(`   MERCADO_PAGO_MODE: ${mpMode}`);
+            console.log(`   ¿Es sandbox/testing?: ${isSandboxMode}`);
+            
+            if (isSandboxMode) {
+                console.warn('   ✅ SANDBOX MODE: Modo de prueba detectado');
+                console.warn('   → Mercado Pago sandbox no envía x-timestamp correctamente');
+                console.warn('   → Continuando sin validar firma completa (permitido en sandbox)');
             } else {
-                console.error('❌ PRODUCTION: Headers de seguridad faltantes');
+                console.error('❌ PRODUCTION MODE: Headers de seguridad faltantes');
                 console.error('   Se requieren: x-signature, x-request-id, x-timestamp');
+                console.error(`   Modo actual: ${mpMode}`);
+                console.error('   Para testing, configurar: MERCADO_PAGO_MODE=sandbox');
                 return res.status(400).json({ 
                     error: 'Missing security headers in production' 
                 });
