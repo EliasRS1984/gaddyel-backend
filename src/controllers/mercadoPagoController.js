@@ -4,10 +4,6 @@ import Client from '../models/Client.js';
 import WebhookLog from '../models/WebhookLog.js';
 import MercadoPagoService from '../services/MercadoPagoService.js';
 import logger from '../utils/logger.js';
-import axios from 'axios';
-
-const MP_API_URL = 'https://api.mercadopago.com';
-const MP_ACCESS_TOKEN = process.env.MERCADO_PAGO_ACCESS_TOKEN;
 
 // Configuración de Mercado Pago (API)
 const MP_API_URL = 'https://api.mercadopago.com';
