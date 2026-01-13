@@ -85,13 +85,18 @@ export const verifyMercadoPagoSignature = (req, res, next) => {
         } else {
             // Headers de seguridad incompletos
             console.warn('⚠️ Webhook: Headers de seguridad incompletos');
-            console.warn('   En TESTING: Mercado Pago sandbox podría no enviarlos correctamente');
-            console.warn('   Continuando sin validar firma (SOLO para TESTING)');
             
-            // Para TESTING/SANDBOX: permitir sin firma si falta x-signature
-            // En PRODUCTION, esto sería un error
-            if (process.env.NODE_ENV === 'production') {
-                console.error('❌ PRODUCTION: No se permite webhook sin firma');
+            // Detectar si estamos usando credenciales de TESTING/SANDBOX
+            const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN || '';
+            const isTestingCredentials = accessToken.includes('TEST-');
+            
+            if (isTestingCredentials) {
+                console.warn('   ✅ TESTING MODE: Credenciales MP de prueba detectadas');
+                console.warn('   → Mercado Pago sandbox no envía x-timestamp');
+                console.warn('   → Continuando sin validar firma (permitido solo en testing)');
+            } else {
+                console.error('❌ PRODUCTION: Headers de seguridad faltantes');
+                console.error('   Se requieren: x-signature, x-request-id, x-timestamp');
                 return res.status(400).json({ 
                     error: 'Missing security headers in production' 
                 });
