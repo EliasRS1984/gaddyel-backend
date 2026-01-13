@@ -1,11 +1,9 @@
 import express from 'express';
 import {
     createCheckoutPreference,
-    handleWebhook,
     getPaymentStatus
 } from '../controllers/mercadoPagoController.js';
 import verifyToken from '../middleware/authMiddleware.js';
-import verifyMercadoPagoSignature from '../middleware/webhookVerification.js';
 
 const router = express.Router();
 
@@ -23,11 +21,9 @@ router.post('/preferences', verifyToken, createCheckoutPreference);
 router.get('/payment/:ordenId', verifyToken, getPaymentStatus);
 
 /**
- * POST /api/mercadopago/webhook - Recibir notificaciones de Mercado Pago
- * NO requiere autenticación (es un webhook público)
- * ✅ PROTEGIDO: Verifica firma de Mercado Pago
- * Mercado Pago enviará datos para notificar cambios de pago
+ * POST /api/mercadopago/webhook
+ * ⚠️ REGISTRADO EN index.js ANTES de middleware global
+ * Necesita raw body para verificar firma HMAC
  */
-router.post('/webhook', verifyMercadoPagoSignature, handleWebhook);
 
 export default router;

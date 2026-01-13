@@ -3,91 +3,134 @@ import crypto from 'crypto';
 /**
  * Middleware para verificar la firma de webhooks de Mercado Pago
  * 
+ * ARQUITECTURA:
+ * 1. Este middleware recibe express.raw() body (no parseado)
+ * 2. Verifica firma HMAC-SHA256
+ * 3. Parsea JSON y lo pone en req.body para el controlador
+ * 
  * Mercado Pago envía:
- * - X-Signature: HMAC-SHA256 del request
+ * - X-Signature: HMAC-SHA256 del request (v1 = HMAC-SHA256 de payload)
  * - X-Request-Id: ID único del request
  * - X-Timestamp: Timestamp del request
  * 
- * Para TESTING/DEVELOPMENT:
- * - Si no tienen signature, permite paso pero solo si access_token es válido
- * 
- * Para PRODUCTION:
- * - Requiere x-signature y valida con HMAC-SHA256
+ * Formato X-Signature: ts=timestamp,v1=hexdigest
+ * Payload a firmar: {request-id}.{timestamp}.{body-string}
  */
 export const verifyMercadoPagoSignature = (req, res, next) => {
     try {
         const signature = req.headers['x-signature'];
         const requestId = req.headers['x-request-id'];
         const timestamp = req.headers['x-timestamp'];
-        const accessToken = req.query?.access_token || req.body?.access_token;
+        
+        // Log para diagnosticar
+        console.log('🔍 [Webhook] Headers recibidos:');
+        console.log('   x-signature:', signature ? '✅ presente' : '❌ faltante');
+        console.log('   x-request-id:', requestId ? '✅ presente' : '❌ faltante');
+        console.log('   x-timestamp:', timestamp ? '✅ presente' : '❌ faltante');
 
-        // MODO TESTING: Si acceso_token presente y env es TESTING/DEV
-        const isTestingMode = process.env.NODE_ENV !== 'production';
-        if (isTestingMode && accessToken) {
-            console.log(`✅ [TESTING MODE] Webhook permitido sin signature. Access token: ${accessToken.substring(0, 10)}...`);
-            // En testing, permite sin firma pero log para auditoría
-            return next();
+        // Intentar verificar firma si TODOS los headers están presentes
+        if (signature && requestId && timestamp) {
+            const secretKey = process.env.MERCADO_PAGO_WEBHOOK_SECRET;
+            
+            if (!secretKey) {
+                console.error('❌ MERCADO_PAGO_WEBHOOK_SECRET no configurado');
+                return res.status(500).json({ error: 'Server configuration error' });
+            }
+
+            // El body es un Buffer, convertir a string
+            const bodyString = req.body.toString('utf-8');
+            
+            // Construir payload a verificar
+            const payload = `${requestId}.${timestamp}.${bodyString}`;
+            
+            // Parsear X-Signature
+            const signatureParts = signature.split(',').reduce((acc, part) => {
+                const [key, value] = part.split('=');
+                acc[key.trim()] = value.trim();
+                return acc;
+            }, {});
+
+            const receivedSignature = signatureParts.v1;
+            
+            if (!receivedSignature) {
+                console.warn('❌ Webhook: Firma v1 no encontrada en x-signature');
+                return res.status(400).json({ error: 'Invalid signature format' });
+            }
+
+            // Generar HMAC-SHA256 esperado
+            const expectedSignature = crypto
+                .createHmac('sha256', secretKey)
+                .update(payload)
+                .digest('hex');
+
+            // Comparar usando timing-safe
+            try {
+                const isValid = crypto.timingSafeEqual(
+                    Buffer.from(expectedSignature),
+                    Buffer.from(receivedSignature)
+                );
+
+                if (!isValid) {
+                    console.warn(`⚠️ Webhook: Firma inválida`);
+                    console.warn(`   Esperada: ${expectedSignature.substring(0, 16)}...`);
+                    console.warn(`   Recibida: ${receivedSignature.substring(0, 16)}...`);
+                    return res.status(401).json({ error: 'Invalid signature' });
+                }
+
+                console.log(`✅ Webhook signature válida para request: ${requestId}`);
+            } catch (signatureError) {
+                console.warn(`❌ Error comparando firmas: ${signatureError.message}`);
+                return res.status(401).json({ error: 'Signature verification failed' });
+            }
+        } else {
+            // Headers de seguridad incompletos
+            console.warn('⚠️ Webhook: Headers de seguridad incompletos');
+            console.warn('   En TESTING: Mercado Pago sandbox podría no enviarlos correctamente');
+            console.warn('   Continuando sin validar firma (SOLO para TESTING)');
+            
+            // Para TESTING/SANDBOX: permitir sin firma si falta x-signature
+            // En PRODUCTION, esto sería un error
+            if (process.env.NODE_ENV === 'production') {
+                console.error('❌ PRODUCTION: No se permite webhook sin firma');
+                return res.status(400).json({ 
+                    error: 'Missing security headers in production' 
+                });
+            }
         }
 
-        // MODO PRODUCTION o sin access_token: Requiere headers de seguridad
-        if (!signature || !requestId || !timestamp) {
-            console.warn('❌ Webhook: Headers de seguridad faltantes');
-            console.warn('   Headers enviados:', Object.keys(req.headers).filter(h => h.includes('x-')));
-            return res.status(400).json({ 
-                error: 'Missing required headers: x-signature, x-request-id, x-timestamp' 
-            });
+        // Parsear el JSON body para el controlador
+        try {
+            if (Buffer.isBuffer(req.body)) {
+                req.body = JSON.parse(req.body.toString('utf-8'));
+            }
+        } catch (parseError) {
+            console.error('❌ Error parseando JSON:', parseError.message);
+            return res.status(400).json({ error: 'Invalid JSON body' });
         }
 
-        // El secret key viene de credenciales de Mercado Pago
-        const secretKey = process.env.MERCADO_PAGO_WEBHOOK_SECRET;
-        if (!secretKey) {
-            console.error('❌ MERCADO_PAGO_WEBHOOK_SECRET no configurado');
-            return res.status(500).json({ error: 'Server configuration error' });
-        }
-
-        // Parsear X-Signature (formato: ts=1234567890,v1=abc123...)
-        const signatureParts = signature.split(',').reduce((acc, part) => {
-            const [key, value] = part.split('=');
-            acc[key.trim()] = value.trim();
-            return acc;
-        }, {});
-
-        const receivedSignature = signatureParts.v1;
-        if (!receivedSignature) {
-            console.warn('❌ Webhook: Firma v1 no encontrada');
-            return res.status(400).json({ error: 'Invalid signature format' });
-        }
-
-        // Construir el payload a verificar: {request-id}.{timestamp}.{body-as-string}
-        const payload = `${requestId}.${timestamp}.${JSON.stringify(req.body)}`;
-
-        // Generar el HMAC-SHA256
-        const expectedSignature = crypto
-            .createHmac('sha256', secretKey)
-            .update(payload)
-            .digest('hex');
-
-        // Comparar las firmas usando comparison seguro (timing-safe)
-        const isValid = crypto.timingSafeEqual(
-            Buffer.from(expectedSignature),
-            Buffer.from(receivedSignature)
-        );
-
-        if (!isValid) {
-            console.warn(`❌ Webhook: Firma inválida. Esperado: ${expectedSignature.substring(0, 10)}..., Recibido: ${receivedSignature.substring(0, 10)}...`);
-            return res.status(401).json({ error: 'Invalid signature' });
-        }
-
-        console.log(`✅ Webhook signature válida para request: ${requestId}`);
         next();
 
     } catch (err) {
         console.error('❌ Error verificando firma de webhook:', err.message);
-        
-        // No lanzar error interno, simplemente rechazar
         return res.status(401).json({ error: 'Signature verification failed' });
     }
 };
+
+/**
+ * Cómo obtener MERCADO_PAGO_WEBHOOK_SECRET:
+ * 
+ * 1. Ir a: https://www.mercadopago.com/developers/es/docs/checkout-pro/integrations/notifications/webhooks
+ * 2. En el dashboard de MP, sección "Webhooks"
+ * 3. El secret está en "Token": copiar sin las primeras 4 letras de credencial
+ * 
+ * TESTING/SANDBOX:
+ * - Secret es diferente en sandbox vs production
+ * - Verificar en Mercado Pago Sandbox Dashboard
+ * 
+ * Configurar en:
+ * - Render: Variables de entorno → MERCADO_PAGO_WEBHOOK_SECRET
+ * - .env local: MERCADO_PAGO_WEBHOOK_SECRET=tu_secret_aqui
+ */
 
 /**
  * Información sobre cómo obtener MERCADO_PAGO_WEBHOOK_SECRET:

@@ -22,6 +22,8 @@ import { applySecurity } from "./middleware/security.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import verifyToken from "./middleware/authMiddleware.js";
 import cookieParser from 'cookie-parser';
+import { handleWebhook } from "./controllers/mercadoPagoController.js";
+import { verifyMercadoPagoSignature } from "./middleware/webhookVerification.js";
 
 dotenv.config();
 // redeploy trigger: update CORS config timestamp
@@ -102,17 +104,24 @@ app.use(cors({
     credentials: true,
 }));
 
-// ✅ Parsers
+/**
+ * ⚠️ WEBHOOK DE MERCADO PAGO - ANTES DE MIDDLEWARE GLOBAL
+ * Necesita raw body para verificar firma HMAC
+ * Debe estar ANTES de express.json() y mongoSanitize
+ */
+app.post('/api/mercadopago/webhook', 
+    express.raw({ type: 'application/json' }),
+    verifyMercadoPagoSignature,
+    handleWebhook
+);
+
+// ✅ Parsers (después del webhook)
 app.use(cookieParser());
 app.use(express.json({ limit: '10kb' }));
 
-// ✅ Sanitización NoSQL (EXCLUYE webhook de Mercado Pago)
+// ✅ Sanitización NoSQL
 app.use(mongoSanitize({
     replaceWith: '_',
-    skip: (req) => {
-        // Webhook de MP necesita parámetros de query para validación
-        return req.path === '/api/mercadopago/webhook';
-    },
     onSanitize: ({ req, key }) => {
         logger.security(`Intento de NoSQL injection bloqueado`, { 
             ip: req?.ip, 
