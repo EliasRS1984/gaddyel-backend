@@ -194,13 +194,26 @@ export const createOrder = async (req, res, next) => {
         let preferenceId = null;
 
         try {
+            console.log('🔵 Intentando crear preferencia de Mercado Pago...');
+            console.log('   Orden ID:', orden._id);
+            console.log('   Total:', totalCalculado);
+            console.log('   Items:', productosValidados.length);
+            
             const mpResponse = await MercadoPagoService.createPreference(orden);
+            
+            console.log('✅ Respuesta de MP:', {
+                preferenceId: mpResponse.preferenceId,
+                initPoint: mpResponse.initPoint ? 'presente' : 'undefined',
+                sandboxInitPoint: mpResponse.sandboxInitPoint ? 'presente' : 'undefined'
+            });
+            
             checkoutUrl = mpResponse.initPoint;
             sandboxCheckoutUrl = mpResponse.sandboxInitPoint;
             preferenceId = mpResponse.preferenceId;
             console.log('✅ Preferencia MP creada:', preferenceId);
         } catch (mpError) {
             console.error('❌ Error creando preferencia MP:', mpError.message);
+            console.error('   Stack:', mpError.stack);
             console.error('   El pago a través de Mercado Pago NO estará disponible');
             console.error('   La orden fue creada, pero sin redirección a MP');
             // No fallar si MP falla - continuar con confirmación
