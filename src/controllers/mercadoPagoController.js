@@ -86,12 +86,8 @@ export const handleWebhook = async (req, res) => {
             ipCliente: req.ip
         });
 
-        // Log de auditoría
-        await logger.logWebhookOperation('WEBHOOK_RECEIVED', null, {
-            type,
-            externalId: id,
-            dataId: data?.id
-        });
+        // Log simple
+        console.log('📨 [Webhook] Recibido:', type, 'ID:', id);
 
         // Si es payment, consultar API de Mercado Pago
         if (type === 'payment') {
@@ -107,7 +103,8 @@ export const handleWebhook = async (req, res) => {
 
     } catch (err) {
         console.error('❌ Error procesando webhook:', err.message);
-        await logger.logCriticalError('WEBHOOK_PROCESSING_ERROR', err.message, {
+        logger.error('WEBHOOK_PROCESSING_ERROR', {
+            message: err.message,
             stack: err.stack,
             query: req.query
         });
@@ -141,7 +138,8 @@ async function procesarPago(paymentId, webhookLog) {
                 tipo: 'error',
                 mensaje: 'Orden no encontrada'
             };
-            await logger.logCriticalError('MP_WEBHOOK_ORDER_NOT_FOUND', `Orden ${ordenId} no encontrada en webhook`, {
+            logger.error('MP_WEBHOOK_ORDER_NOT_FOUND', {
+                message: `Orden ${ordenId} no encontrada en webhook`,
                 paymentId,
                 externalReference: ordenId
             });
@@ -155,7 +153,7 @@ async function procesarPago(paymentId, webhookLog) {
                 mensaje: 'Pago duplicado detectado, ignorando'
             };
             webhookLog.procesadoCorrectamente = true;
-            await logger.logPaymentOperation('DUPLICATE_PAYMENT_DETECTED', orden._id, {
+            console.warn('⚠️ DUPLICATE_PAYMENT_DETECTED:', {
                 orderNumber: orden.orderNumber,
                 paymentId,
                 previousPaymentId: orden.mercadoPagoPaymentId
@@ -246,8 +244,8 @@ async function procesarPago(paymentId, webhookLog) {
 
             console.log(`✅ Pago aprobado: ${paymentId} para orden ${orden.orderNumber}`);
 
-            // Log de auditoría
-            await logger.logPaymentOperation('PAYMENT_APPROVED', orden._id, {
+            // Log simple
+            console.log('✅ PAYMENT_APPROVED:', {
                 orderNumber: orden.orderNumber,
                 paymentId,
                 total: orden.total,
@@ -255,7 +253,7 @@ async function procesarPago(paymentId, webhookLog) {
             });
         } else if (payment.status === 'rejected') {
             orden.motivoRechazo = payment.status_detail || 'Rechazado por el sistema de pagos';
-            await logger.logPaymentOperation('PAYMENT_REJECTED', orden._id, {
+            console.warn('⚠️ PAYMENT_REJECTED:', {
                 orderNumber: orden.orderNumber,
                 paymentId,
                 statusDetail: payment.status_detail
@@ -277,7 +275,8 @@ async function procesarPago(paymentId, webhookLog) {
             mensaje: err.message
         };
         console.error('❌ Error procesando pago:', err.message);
-        await logger.logCriticalError('MP_PAYMENT_PROCESSING_ERROR', err.message, {
+        logger.error('MP_PAYMENT_PROCESSING_ERROR', {
+            message: err.message,
             paymentId,
             stack: err.stack
         });
@@ -350,7 +349,8 @@ export const getPaymentStatus = async (req, res) => {
 
         const orden = await Order.findById(ordenId);
         if (!orden) {
-            await logger.logCriticalError('MP_STATUS_ORDER_NOT_FOUND', `Orden ${ordenId} no encontrada`, {
+            logger.error('MP_STATUS_ORDER_NOT_FOUND', {
+                message: `Orden ${ordenId} no encontrada`,
                 ordenId
             });
             return res.status(404).json({ error: 'Orden no encontrada' });
@@ -369,7 +369,8 @@ export const getPaymentStatus = async (req, res) => {
 
     } catch (err) {
         console.error('❌ Error obteniendo estado de pago:', err.message);
-        await logger.logCriticalError('MP_STATUS_ERROR', err.message, {
+        logger.error('MP_STATUS_ERROR', {
+            message: err.message,
             ordenId: req.params.ordenId,
             stack: err.stack
         });
