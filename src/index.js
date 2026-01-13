@@ -106,9 +106,13 @@ app.use(cors({
 app.use(cookieParser());
 app.use(express.json({ limit: '10kb' }));
 
-// ✅ Sanitización NoSQL
+// ✅ Sanitización NoSQL (EXCLUYE webhook de Mercado Pago)
 app.use(mongoSanitize({
     replaceWith: '_',
+    skip: (req) => {
+        // Webhook de MP necesita parámetros de query para validación
+        return req.path === '/api/mercadopago/webhook';
+    },
     onSanitize: ({ req, key }) => {
         logger.security(`Intento de NoSQL injection bloqueado`, { 
             ip: req?.ip, 
