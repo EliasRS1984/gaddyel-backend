@@ -174,6 +174,16 @@ async function procesarPago(paymentId, webhookLog) {
         orden.estadoPago = statusMapping[payment.status] || 'pending';
         orden.mercadoPagoPaymentId = paymentId;
 
+        // 🔍 DEBUG: Loggear datos del pago recibidos de MP
+        console.log('🔍 [Webhook] Datos del pago recibidos de Mercado Pago:');
+        console.log('   Payment ID:', payment.id);
+        console.log('   Status:', payment.status);
+        console.log('   Payment Type:', payment.payment_type);
+        console.log('   Payment Method:', payment.payment_method);
+        console.log('   Transaction Amount:', payment.transaction_amount);
+        console.log('   Card Info:', payment.card);
+        console.log('   Payer:', payment.payer);
+
         // ✅ GUARDAR INFORMACIÓN COMPLETA DE TRANSACCIÓN
         // Esto se mostrará en el admin y en el cliente
         orden.payment = orden.payment || {};
@@ -196,6 +206,13 @@ async function procesarPago(paymentId, webhookLog) {
             merchantAccountId: payment.merchant_account_id
         };
         orden.payment.method = 'mercadopago';
+
+        console.log('✅ [Webhook] Datos guardados en orden.payment.mercadoPago:', {
+            paymentId: orden.payment.mercadoPago.paymentId,
+            status: orden.payment.mercadoPago.status,
+            paymentMethod: orden.payment.mercadoPago.paymentMethod,
+            transactionAmount: orden.payment.mercadoPago.transactionAmount
+        });
 
         // Guardar detalles adicionales (legacy - mantener por compatibilidad)
         orden.detallesPago = {
