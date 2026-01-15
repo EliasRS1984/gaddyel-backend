@@ -57,9 +57,10 @@ export const obtenerProductoPorId = async (req, res, next) => {
 
         res.json(productoFormateado);
     } catch (error) {
+        // FLUJO: Error handling delegado al middleware de errores
+        // Solo un call a next() para evitar ERR_HTTP_HEADERS_SENT
         logger.error("Error al buscar el producto:", error.message);
         next(error);
-        res.status(500).json({ error: "Error al buscar el producto" });
     }
 };
 
