@@ -34,7 +34,16 @@ validateEnv();
 const app = express();
 app.set('trust proxy', 1);
 
-// ✅ CORS MEJORADO - Whitelist desde env vars + fallback seguro a dominio Vercel
+/**
+ * ✅ CORS MEJORADO - Whitelist dinámico para Vercel + env vars
+ * 
+ * FLUJO:
+ * - Desarrollo: localhost + ngrok/localtunnel
+ * - Producción: URLs dinámicas de Vercel + ALLOWED_ORIGINS env var
+ * 
+ * NOTA: Vercel asigna URLs dinámicas durante deployments (con hash de deploy)
+ * Por eso aceptamos cualquier subdominio de vercel.app
+ */
 const getAllowedOrigins = () => {
     const baseOrigins = [
         'http://localhost:5173',
@@ -47,9 +56,10 @@ const getAllowedOrigins = () => {
         'http://127.0.0.1:5175',
     ];
 
-    // Fallback explícito para producción (Vercel)
+    // Fallback para producción (Vercel - con soporte para URLs dinámicas)
     const productionFrontends = [
-        'https://proyecto-gaddyel.vercel.app'
+        'https://proyecto-gaddyel.vercel.app',
+        // Nota: URLs dinámicas de Vercel se validan con regex en cors()
     ];
 
     // Agregar URLs de túneles si existen en .env
@@ -94,6 +104,12 @@ app.use(cors({
         
         // ✅ Whitelist estricta (desarrollo y producción)
         if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+
+        // ✅ DINÁMICO: Aceptar cualquier subdomain *.vercel.app en producción
+        // Vercel asigna URLs dinámicas con hash (proyecto-gaddyel-XXX.vercel.app)
+        if (process.env.NODE_ENV === 'production' && origin.endsWith('.vercel.app')) {
             return callback(null, true);
         }
         

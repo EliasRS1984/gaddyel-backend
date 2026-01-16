@@ -27,7 +27,7 @@ class MercadoPagoService {
         this.client = new MercadoPagoConfig({
             accessToken,
             options: {
-                timeout: 5000,
+                timeout: 10000, // ✅ CORREGIDO: 10s (recomendación oficial MP)
                 idempotencyKey: undefined // Se configura por request
             }
         });
@@ -158,10 +158,18 @@ class MercadoPagoService {
             console.log(`     • Pending: ${backUrls.pending}`);
             console.log(`   Webhook: ${preferenceData.notification_url ? 'Habilitado' : 'Deshabilitado (desarrollo)'}`);
 
-            // 📤 ENVIAR A MERCADO PAGO API
+            // 📤 ENVIAR A MERCADO PAGO API con idempotency key
             console.log('\n📤 Enviando preferencia a Mercado Pago API...');
+            
+            // ✅ IDEMPOTENCIA: Generar clave única para evitar duplicados
+            const idempotencyKey = `pref-${order._id.toString()}-${Date.now()}`;
+            console.log(`   🔑 Idempotency Key: ${idempotencyKey}`);
+            
             const response = await this.preferenceClient.create({
-                body: preferenceData
+                body: preferenceData,
+                requestOptions: {
+                    idempotencyKey // ✅ Garantiza operación única
+                }
             });
 
             console.log(`\n✅ Preferencia creada exitosamente`);

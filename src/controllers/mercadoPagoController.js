@@ -1,4 +1,5 @@
 import axios from 'axios';
+import crypto from 'crypto';
 import Order from '../models/Order.js';
 import Client from '../models/Client.js';
 import WebhookLog from '../models/WebhookLog.js';
@@ -17,6 +18,10 @@ const MP_ACCESS_TOKEN = process.env.MERCADO_PAGO_ACCESS_TOKEN;
 /**
  * Crear preferencia de Mercado Pago (checkout)
  * Frontend envía el ordenId después de crear la orden
+ * 
+ * ✅ SEGURIDAD:
+ * - Idempotencia: Reutiliza preferencia existente si ya fue creada
+ * - Previene cobros duplicados por múltiples clics
  */
 export const createCheckoutPreference = async (req, res) => {
     try {
@@ -38,7 +43,25 @@ export const createCheckoutPreference = async (req, res) => {
             return res.status(404).json({ error: 'Orden no encontrada' });
         }
 
-        // ✅ Usar servicio optimizado
+        // ✅ IDEMPOTENCIA: Verificar si ya existe preferencia para esta orden
+        if (orden.payment?.mercadoPago?.preferenceId && orden.payment?.mercadoPago?.initPoint) {
+            console.log(`♻️ Reutilizando preferencia existente para orden ${orden.orderNumber}`);
+            logger.info('MP_PREFERENCE_REUSED', {
+                orderId: orden._id,
+                orderNumber: orden.orderNumber,
+                preferenceId: orden.payment.mercadoPago.preferenceId
+            });
+            
+            return res.json({
+                ok: true,
+                checkoutUrl: orden.payment.mercadoPago.initPoint,
+                sandboxCheckoutUrl: orden.payment.mercadoPago.sandboxInitPoint,
+                preferenceId: orden.payment.mercadoPago.preferenceId,
+                reused: true
+            });
+        }
+
+        // ✅ Crear nueva preferencia (servicio maneja idempotency key)
         const { preferenceId, initPoint, sandboxInitPoint } = await MercadoPagoService.createPreference(orden);
 
         // Log de auditoría
@@ -73,6 +96,11 @@ export const createCheckoutPreference = async (req, res) => {
 /**
  * Webhook de Mercado Pago
  * Recibe notificaciones de pago
+ * 
+ * ✅ SEGURIDAD CRÍTICA:
+ * - Valida firma HMAC SHA256 (x-signature header)
+ * - Previene webhooks falsos de atacantes
+ * - Implementa idempotencia para evitar procesamiento duplicado
  */
 export const handleWebhook = async (req, res) => {
     try {
@@ -86,12 +114,77 @@ export const handleWebhook = async (req, res) => {
             ipCliente: req.ip
         });
 
-        // Log simple
         console.log('📨 [Webhook] Recibido:', type, 'ID:', id);
+        
+        // ✅ SEGURIDAD CRÍTICA: Validar firma del webhook
+        const xSignature = req.headers['x-signature'];
+        const xRequestId = req.headers['x-request-id'];
+        
+        if (!xSignature || !xRequestId) {
+            console.warn('⚠️ [Webhook] Headers de seguridad faltantes');
+            logger.security('WEBHOOK_MISSING_HEADERS', {
+                ip: req.ip,
+                type,
+                id,
+                hasSignature: !!xSignature,
+                hasRequestId: !!xRequestId
+            });
+            
+            webhookLog.resultado = {
+                tipo: 'error',
+                mensaje: 'Headers de seguridad faltantes'
+            };
+            await webhookLog.save();
+            
+            return res.status(401).json({ error: 'Unauthorized - Missing security headers' });
+        }
+        
+        // Validar firma HMAC
+        const isValidSignature = validateWebhookSignature(xSignature, xRequestId, req.body);
+        
+        if (!isValidSignature) {
+            console.error('❌ [Webhook] Firma inválida - Posible ataque');
+            logger.security('WEBHOOK_INVALID_SIGNATURE', {
+                ip: req.ip,
+                type,
+                id,
+                xSignature: xSignature.substring(0, 50) + '...'
+            });
+            
+            webhookLog.resultado = {
+                tipo: 'error',
+                mensaje: 'Firma inválida'
+            };
+            await webhookLog.save();
+            
+            return res.status(401).json({ error: 'Unauthorized - Invalid signature' });
+        }
+        
+        console.log('✅ [Webhook] Firma validada correctamente');
+        
+        // ✅ IDEMPOTENCIA: Verificar si ya procesamos este webhook
+        const webhookUniqueId = `${type}-${id}-${data?.id || 'unknown'}`;
+        const existingWebhook = await WebhookLog.findOne({
+            externalId: webhookUniqueId,
+            procesadoCorrectamente: true
+        });
+        
+        if (existingWebhook) {
+            console.log('♻️ [Webhook] Ya procesado anteriormente, ignorando');
+            logger.info('WEBHOOK_ALREADY_PROCESSED', { webhookUniqueId });
+            
+            return res.status(200).json({ 
+                status: 'already_processed',
+                message: 'Webhook ya fue procesado anteriormente'
+            });
+        }
+        
+        // Actualizar ID único para idempotencia
+        webhookLog.externalId = webhookUniqueId;
 
-        // Si es payment, consultar API de Mercado Pago
+        // Si es payment, consultar API de Mercado Pago con retry logic
         if (type === 'payment') {
-            await procesarPago(data.id, webhookLog);
+            await procesarPagoConRetry(data.id, webhookLog);
         } else if (type === 'merchant_order') {
             await procesarMerchantOrder(data.id, webhookLog);
         }
@@ -377,6 +470,107 @@ export const getPaymentStatus = async (req, res) => {
         res.status(500).json({ error: 'Error obteniendo estado' });
     }
 };
+
+/**
+ * ✅ VALIDAR FIRMA DEL WEBHOOK (x-signature header)
+ * Implementación según documentación oficial de Mercado Pago
+ * https://www.mercadopago.com.ar/developers/es/docs/your-integrations/notifications/webhooks
+ * 
+ * @param {string} xSignature - Header x-signature (formato: ts=123456789,v1=hash)
+ * @param {string} xRequestId - Header x-request-id
+ * @param {Object} body - Body del request
+ * @returns {boolean} true si la firma es válida
+ */
+function validateWebhookSignature(xSignature, xRequestId, body) {
+    try {
+        const secretKey = process.env.MERCADO_PAGO_WEBHOOK_SECRET || process.env.MERCADO_PAGO_ACCESS_TOKEN;
+        
+        if (!secretKey) {
+            console.error('❌ MERCADO_PAGO_WEBHOOK_SECRET no configurado');
+            return false;
+        }
+        
+        // Extraer ts (timestamp) y v1 (hash) de x-signature
+        // Formato esperado: "ts=1234567890,v1=abc123def456..."
+        const signatureParts = xSignature.split(',');
+        let ts, hash;
+        
+        signatureParts.forEach(part => {
+            const [key, value] = part.split('=');
+            if (key && key.trim() === 'ts') ts = value;
+            if (key && key.trim() === 'v1') hash = value;
+        });
+        
+        if (!ts || !hash) {
+            console.error('❌ Formato de x-signature inválido');
+            return false;
+        }
+        
+        // Construir manifest string según especificación de MP
+        // Formato: "id:<data.id>;request-id:<x-request-id>;ts:<ts>;"
+        const dataId = body?.data?.id || body?.id || '';
+        const manifestString = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
+        
+        console.log(`   🔐 Validando firma HMAC...`);
+        console.log(`   📝 Manifest: ${manifestString}`);
+        
+        // Calcular HMAC SHA256
+        const hmac = crypto
+            .createHmac('sha256', secretKey)
+            .update(manifestString)
+            .digest('hex');
+        
+        const isValid = hmac === hash;
+        
+        if (!isValid) {
+            console.error(`   ❌ Firma no coincide`);
+            console.error(`   Expected: ${hmac}`);
+            console.error(`   Received: ${hash}`);
+        }
+        
+        return isValid;
+        
+    } catch (error) {
+        console.error('❌ Error validando firma del webhook:', error.message);
+        return false;
+    }
+}
+
+/**
+ * Procesar pago con retry logic y backoff exponencial
+ * Maneja timeouts y errores transitorios de la API de Mercado Pago
+ */
+async function procesarPagoConRetry(paymentId, webhookLog, maxRetries = 3) {
+    let lastError;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            console.log(`   🔄 Intento ${attempt}/${maxRetries} - Obteniendo pago ${paymentId}`);
+            
+            await procesarPago(paymentId, webhookLog);
+            
+            console.log(`   ✅ Pago procesado exitosamente`);
+            return; // Éxito
+            
+        } catch (error) {
+            lastError = error;
+            
+            // Si es el último intento, lanzar error
+            if (attempt === maxRetries) {
+                console.error(`   ❌ Fallo definitivo después de ${maxRetries} intentos`);
+                throw error;
+            }
+            
+            // Backoff exponencial: 1s, 2s, 4s
+            const delay = 1000 * Math.pow(2, attempt - 1);
+            console.warn(`   ⚠️ Error en intento ${attempt}, reintentando en ${delay}ms: ${error.message}`);
+            
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
+    
+    throw lastError;
+}
 
 export default {
     createCheckoutPreference,
