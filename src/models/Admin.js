@@ -5,7 +5,15 @@ const adminSchema = new mongoose.Schema({
 
     // Estandarizado a "password"
     password: { type: String, required: true },
-});
+    
+    // ✅ NUEVO: Campo rol para control de permisos
+    rol: { type: String, default: 'admin', enum: ['admin', 'superadmin'] },
+    
+    // ✅ Email opcional para mejorar identificación
+    email: { type: String, sparse: true },
+    
+    // Timestamp
+    createdAt: { type: Date, default: Date.now }
 
 // 🔁 Middleware opcional para compatibilidad
 // Si por error alguien envía "contraseña", lo convertimos a "password"

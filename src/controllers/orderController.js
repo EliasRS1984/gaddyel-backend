@@ -472,13 +472,19 @@ export const deleteOrder = async (req, res, next) => {
 
         console.log('🗑️  DELETE /pedidos/:id - Solicitud de eliminación');
         console.log('  - Orden ID:', id);
-        console.log('  - Admin Usuario:', adminUser?.email || 'Sin email');
+        console.log('  - Admin Usuario:', adminUser?.email || adminUser?.usuario || 'Sin identificar');
+        console.log('  - Admin Rol:', adminUser?.rol || 'SIN ROL');
+        console.log('  - Admin completo:', { id: adminUser?.id, usuario: adminUser?.usuario, rol: adminUser?.rol });
 
         // ✅ Validar ObjectId
         validateObjectId(id, 'id');
 
         // ✅ Verificar autorización (solo admin)
-        if (adminUser?.rol !== 'admin') {
+        // Acepta tanto 'admin' como 'Admin' para mayor flexibilidad
+        if (!adminUser || (adminUser.rol !== 'admin' && adminUser.rol !== 'Admin')) {
+            console.error('❌ Unauthorized delete attempt');
+            console.error('   User:', adminUser?.usuario || 'unknown');
+            console.error('   Role:', adminUser?.rol || 'undefined');
             return res.status(403).json({ error: 'Solo administradores pueden eliminar órdenes' });
         }
 

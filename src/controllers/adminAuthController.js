@@ -14,7 +14,12 @@ function createRandomToken() {
 function signAccessToken(admin) {
   // ✅ Usar configuración centralizada
   return jwt.sign(
-    { id: admin._id, usuario: admin.usuario, role: admin.role || 'admin' }, 
+    { 
+      id: admin._id, 
+      usuario: admin.usuario, 
+      email: admin.email,
+      rol: admin.rol || 'admin'  // ✅ CORREGIDO: Usar 'rol' para consistencia
+    }, 
     JWT_CONFIG.accessSecret, 
     { expiresIn: JWT_CONFIG.accessExpiry }
   );
