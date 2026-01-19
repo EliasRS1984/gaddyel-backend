@@ -32,6 +32,45 @@ export const obtenerProductos = async (req, res, next) => {
     }
 };
 
+/**
+ * ✅ NUEVO: Obtener TODOS los productos sin paginación
+ * Usado por Dashboard y componentes que necesitan lista completa
+ * @route GET /productos/all
+ * @access Public
+ */
+export const obtenerProductosSinPaginacion = async (req, res, next) => {
+    try {
+        logger.info("🔵 GET /productos/all - Solicitando TODOS los productos sin paginación");
+        
+        // ✅ Obtener TODOS los productos sin paginación
+        const productos = await productService.getAllProductsNoPagination(req.query);
+
+        // Formato coherente con el frontend
+        const productosFormateados = productos.map(prod => ({
+            _id: prod._id,
+            nombre: prod.nombre,
+            descripcion: prod.descripcion,
+            imagenSrc: prod.imagenSrc,
+            imagenes: prod.imagenes?.length ? prod.imagenes : [{ src: prod.imagenSrc, alt: prod.nombre }],
+            destacado: prod.destacado,
+            categoria: prod.categoria,
+            precio: prod.precio,
+            cantidadUnidades: prod.cantidadUnidades
+        }));
+
+        logger.info(`✅ Retornando ${productosFormateados.length} productos sin paginación`);
+
+        // Respuesta SIN paginación
+        res.json({
+            data: productosFormateados,
+            total: productosFormateados.length
+        });
+    } catch (error) {
+        logger.error("Error al obtener productos sin paginación:", error.message);
+        next(error);
+    }
+};
+
 // Obtener un producto por ID
 export const obtenerProductoPorId = async (req, res, next) => {
     try {

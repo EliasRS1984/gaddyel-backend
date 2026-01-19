@@ -281,6 +281,58 @@ class ProductService {
             throw error;
         }
     }
+
+    /**
+     * ✅ NUEVO: Obtener TODOS los productos sin paginación
+     * Usado por Dashboard para estadísticas
+     * @param {Object} filters - Filtros opcionales (categoria, destacado, etc)
+     * @returns {Promise<Array>} Array con TODOS los productos que coincidan
+     */
+    async getAllProductsNoPagination(filters = {}) {
+        try {
+            const { categoria, destacado, personalizable } = filters;
+
+            // ✅ Construir pipeline de agregación SIN paginación
+            const pipeline = [];
+
+            // Stage 1: Filtrar documentos
+            const matchStage = {};
+            if (categoria) matchStage.categoria = categoria;
+            if (destacado !== undefined) matchStage.destacado = destacado === 'true';
+            if (personalizable !== undefined) matchStage.personalizable = personalizable === 'true';
+
+            if (Object.keys(matchStage).length > 0) {
+                pipeline.push({ $match: matchStage });
+            }
+
+            // Stage 2: Ordenar por creación (más recientes primero)
+            pipeline.push({ $sort: { createdAt: -1 } });
+
+            // Stage 3: Seleccionar campos necesarios
+            pipeline.push({
+                $project: {
+                    nombre: 1,
+                    descripcion: 1,
+                    imagenSrc: 1,
+                    imagenes: 1,
+                    destacado: 1,
+                    categoria: 1,
+                    precio: 1,
+                    cantidadUnidades: 1,
+                    createdAt: 1
+                }
+            });
+
+            // ✅ Sin skip ni limit - devuelve TODOS
+            const productos = await Producto.aggregate(pipeline);
+
+            logger.info(`getAllProductsNoPagination: Retornando ${productos.length} productos`);
+            return productos;
+        } catch (error) {
+            logger.error('Error obteniendo productos sin paginación', { error: error.message });
+            throw error;
+        }
+    }
 }
 
 export default new ProductService();

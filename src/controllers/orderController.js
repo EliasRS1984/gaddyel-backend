@@ -319,6 +319,36 @@ export const getOrders = async (req, res, next) => {
 };
 
 /**
+ * ✅ NUEVO: Obtener TODAS las órdenes sin paginación
+ * Usado por Dashboard para estadísticas
+ * @route GET /pedidos/all - Devuelve TODAS las órdenes sin paginación
+ * @access Admin
+ */
+export const getOrdersNoPagination = async (req, res, next) => {
+    try {
+        console.log('📨 GET /pedidos/all - Solicitando TODAS las órdenes sin paginación');
+        console.log('🔐 Usuario autenticado:', req.user?.email || 'Desconocido');
+
+        // ✅ Importar el servicio
+        const OrderService = (await import('../services/OrderService.js')).default;
+
+        // ✅ Obtener TODAS las órdenes sin paginación
+        const ordenes = await OrderService.getAllOrdersNoPagination(req.query);
+
+        console.log(`✅ ${ordenes.length} órdenes retornadas sin paginación`);
+
+        res.json({
+            success: true,
+            data: ordenes,
+            total: ordenes.length
+        });
+
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
  * ✅ Obtener orden por ID (admin) con autorización
  * Usa .lean() para lectura optimizada
  */

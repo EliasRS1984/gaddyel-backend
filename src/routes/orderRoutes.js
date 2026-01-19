@@ -5,7 +5,8 @@ import {
     getOrderById,
     updateOrderStatus,
     getClientOrders,
-    deleteOrder
+    deleteOrder,
+    getOrdersNoPagination
 } from '../controllers/orderController.js';
 import verifyToken from '../middleware/authMiddleware.js';
 import { createOrderLimiter, searchLimiter } from '../middleware/rateLimiters.js';
@@ -28,6 +29,13 @@ router.get('/cliente/:clienteId', searchLimiter, getClientOrders);
 
 // Rutas protegidas (admin)
 router.use(verifyToken);
+
+/**
+ * ✅ NUEVO: GET /api/pedidos/all - Listar TODAS las órdenes sin paginación
+ * Usado por Dashboard para estadísticas
+ * IMPORTANTE: Debe ir antes de GET /api/pedidos/:id para evitar conflicto de rutas
+ */
+router.get('/all', getOrdersNoPagination);
 
 /**
  * GET /api/pedidos - Listar todos los pedidos (admin)

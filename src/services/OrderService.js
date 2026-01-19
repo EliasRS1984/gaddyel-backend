@@ -131,6 +131,52 @@ export class OrderService {
         const order = await Order.findById(orderId).select('clienteId').lean();
         return order && order.clienteId.toString() === clientId.toString();
     }
+
+    /**
+     * ✅ NUEVO: Obtiene TODAS las órdenes sin paginación
+     * Usado por Dashboard para estadísticas
+     * @param {Object} filters - Filtros opcionales (estadoPago, estadoPedido, etc)
+     * @returns {Promise<Array>} TODAS las órdenes que coincidan con filtros
+     */
+    static async getAllOrdersNoPagination(filters = {}) {
+        const { estadoPago, estadoPedido, fechaDesde, fechaHasta } = filters;
+
+        // ✅ Construir filtro dinámico con validación
+        const filter = {};
+
+        if (estadoPago && ['pending', 'approved', 'refunded', 'cancelled'].includes(estadoPago)) {
+            filter.estadoPago = estadoPago;
+        }
+
+        if (estadoPedido && ['pendiente', 'procesando', 'enviado', 'entregado', 'cancelado'].includes(estadoPedido)) {
+            filter.estadoPedido = estadoPedido;
+        }
+
+        if (fechaDesde || fechaHasta) {
+            filter.createdAt = {};
+            if (fechaDesde) {
+                try {
+                    filter.createdAt.$gte = new Date(fechaDesde);
+                } catch (e) {
+                    throw new Error('fechaDesde inválida');
+                }
+            }
+            if (fechaHasta) {
+                try {
+                    filter.createdAt.$lte = new Date(fechaHasta);
+                } catch (e) {
+                    throw new Error('fechaHasta inválida');
+                }
+            }
+        }
+
+        // ✅ Sin paginación - devuelve TODAS
+        const ordenes = await Order.find(filter)
+            .lean()
+            .sort({ createdAt: -1 });
+
+        return ordenes;
+    }
 }
 
 export default OrderService;
