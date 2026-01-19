@@ -104,104 +104,144 @@ export const createCheckoutPreference = async (req, res) => {
  */
 export const handleWebhook = async (req, res) => {
     try {
-        const { type, data, id } = req.query;
-
-        // Log de recepción
-        const webhookLog = new WebhookLog({
-            type: type || 'unknown',
-            externalId: id,
-            payload: req.body,
-            ipCliente: req.ip
-        });
-
-        console.log('📨 [Webhook] Recibido:', type, 'ID:', id);
-        
-        // ✅ SEGURIDAD CRÍTICA: Validar firma del webhook
-        const xSignature = req.headers['x-signature'];
-        const xRequestId = req.headers['x-request-id'];
-        
-        if (!xSignature || !xRequestId) {
-            console.warn('⚠️ [Webhook] Headers de seguridad faltantes');
-            logger.security('WEBHOOK_MISSING_HEADERS', {
-                ip: req.ip,
-                type,
-                id,
-                hasSignature: !!xSignature,
-                hasRequestId: !!xRequestId
-            });
-            
-            webhookLog.resultado = {
-                tipo: 'error',
-                mensaje: 'Headers de seguridad faltantes'
-            };
-            await webhookLog.save();
-            
-            return res.status(401).json({ error: 'Unauthorized - Missing security headers' });
-        }
-        
-        // Validar firma HMAC
-        const isValidSignature = validateWebhookSignature(xSignature, xRequestId, req.body);
-        
-        if (!isValidSignature) {
-            console.error('❌ [Webhook] Firma inválida - Posible ataque');
-            logger.security('WEBHOOK_INVALID_SIGNATURE', {
-                ip: req.ip,
-                type,
-                id,
-                xSignature: xSignature.substring(0, 50) + '...'
-            });
-            
-            webhookLog.resultado = {
-                tipo: 'error',
-                mensaje: 'Firma inválida'
-            };
-            await webhookLog.save();
-            
-            return res.status(401).json({ error: 'Unauthorized - Invalid signature' });
-        }
-        
-        console.log('✅ [Webhook] Firma validada correctamente');
-        
-        // ✅ IDEMPOTENCIA: Verificar si ya procesamos este webhook
-        const webhookUniqueId = `${type}-${id}-${data?.id || 'unknown'}`;
-        const existingWebhook = await WebhookLog.findOne({
-            externalId: webhookUniqueId,
-            procesadoCorrectamente: true
-        });
-        
-        if (existingWebhook) {
-            console.log('♻️ [Webhook] Ya procesado anteriormente, ignorando');
-            logger.info('WEBHOOK_ALREADY_PROCESSED', { webhookUniqueId });
-            
-            return res.status(200).json({ 
-                status: 'already_processed',
-                message: 'Webhook ya fue procesado anteriormente'
-            });
-        }
-        
-        // Actualizar ID único para idempotencia
-        webhookLog.externalId = webhookUniqueId;
-
-        // Si es payment, consultar API de Mercado Pago con retry logic
-        if (type === 'payment') {
-            await procesarPagoConRetry(data.id, webhookLog);
-        } else if (type === 'merchant_order') {
-            await procesarMerchantOrder(data.id, webhookLog);
-        }
-
-        await webhookLog.save();
-        
-        console.log('✅ Webhook procesado:', type, id);
+        // ✅ CRÍTICO: Responder INMEDIATAMENTE (< 100ms)
+        // MP tiene timeout de 5 segundos. Si no respondemos rápido, reintenta.
         res.status(200).json({ status: 'received' });
 
-    } catch (err) {
-        console.error('❌ Error procesando webhook:', err.message);
-        logger.error('WEBHOOK_PROCESSING_ERROR', {
-            message: err.message,
-            stack: err.stack,
-            query: req.query
+        // Extraer parámetros según documentación oficial MP
+        const type = req.query.type;                    // "payment" o "merchant_order"
+        const paymentId = req.query['data.id'];         // ID del pago desde query
+        const webhookId = req.query.id;                 // ID único del webhook
+        const liveMode = req.query.live_mode === 'true'; // Boolean: true = producción
+
+        console.log('📨 [Webhook] Recibido:', {
+            type,
+            paymentId,
+            webhookId,
+            liveMode,
+            hasXSignature: !!req.headers['x-signature'],
+            hasXRequestId: !!req.headers['x-request-id']
         });
-        res.status(500).json({ error: 'Error procesando webhook' });
+
+        // ✅ PROCESAMIENTO ASÍNCRONO (en background)
+        // No bloquear la respuesta HTTP
+        (async () => {
+            try {
+                // Crear log de webhook
+                const webhookLog = new WebhookLog({
+                    type: type || 'unknown',
+                    externalId: webhookId,
+                    payload: req.body,
+                    ipCliente: req.ip
+                });
+
+                // ✅ VALIDACIÓN: Validar firma solo si PRODUCCIÓN (live_mode=true)
+                if (liveMode === true) {
+                    // PRODUCCIÓN: Mercado Pago envía headers de seguridad
+                    console.log('🔐 [Webhook] PRODUCCIÓN (live_mode=true): Validando firma HMAC...');
+                    
+                    const xSignature = req.headers['x-signature'];
+                    const xRequestId = req.headers['x-request-id'];
+                    
+                    if (!xSignature || !xRequestId) {
+                        console.error('❌ [Webhook] Headers de seguridad faltantes en PRODUCCIÓN');
+                        logger.security('WEBHOOK_MISSING_HEADERS_PRODUCTION', {
+                            ip: req.ip,
+                            type,
+                            webhookId
+                        });
+                        webhookLog.resultado = {
+                            tipo: 'error',
+                            mensaje: 'Headers de seguridad faltantes en producción'
+                        };
+                        await webhookLog.save();
+                        return;
+                    }
+                    
+                    const isValidSignature = validateWebhookSignature(xSignature, xRequestId, req.body);
+                    
+                    if (!isValidSignature) {
+                        console.error('❌ [Webhook] Firma HMAC inválida - Posible ataque');
+                        logger.security('WEBHOOK_INVALID_SIGNATURE', {
+                            ip: req.ip,
+                            type,
+                            webhookId,
+                            xSignature: xSignature.substring(0, 50) + '...'
+                        });
+                        webhookLog.resultado = {
+                            tipo: 'error',
+                            mensaje: 'Firma HMAC inválida'
+                        };
+                        await webhookLog.save();
+                        return;
+                    }
+                    
+                    console.log('✅ [Webhook] Firma validada correctamente');
+                } else {
+                    // PRUEBA/TEST: Dashboard de Mercado Pago o sandbox
+                    console.log('🧪 [Webhook] PRUEBA (live_mode=false): Saltando validación de firma');
+                    logger.info('WEBHOOK_TEST_MODE', {
+                        ip: req.ip,
+                        type,
+                        webhookId
+                    });
+                }
+                
+                // ✅ IDEMPOTENCIA: Verificar si ya procesamos este webhook
+                const webhookUniqueId = `${type}-${webhookId}-${paymentId}`;
+                const existingWebhook = await WebhookLog.findOne({
+                    externalId: webhookUniqueId,
+                    procesadoCorrectamente: true
+                });
+                
+                if (existingWebhook) {
+                    console.log('♻️ [Webhook] Ya procesado anteriormente, ignorando');
+                    logger.info('WEBHOOK_ALREADY_PROCESSED', { webhookUniqueId });
+                    webhookLog.resultado = {
+                        tipo: 'warning',
+                        mensaje: 'Webhook duplicado, ya fue procesado'
+                    };
+                    await webhookLog.save();
+                    return;
+                }
+                
+                // Actualizar ID único para idempotencia
+                webhookLog.externalId = webhookUniqueId;
+
+                // ✅ PROCESAR SEGÚN TIPO
+                if (type === 'payment' && paymentId) {
+                    await procesarPagoConRetry(paymentId, webhookLog);
+                } else if (type === 'merchant_order' && paymentId) {
+                    await procesarMerchantOrder(paymentId, webhookLog);
+                } else {
+                    console.warn('⚠️ [Webhook] Tipo no reconocido o paymentId faltante:', type);
+                    webhookLog.resultado = {
+                        tipo: 'warning',
+                        mensaje: `Tipo no soportado: ${type}`
+                    };
+                }
+
+                await webhookLog.save();
+                console.log(`✅ [Webhook] Procesado correctamente: ${type}`);
+
+            } catch (err) {
+                console.error('❌ Error en procesamiento asíncrono de webhook:', err.message);
+                logger.error('WEBHOOK_ASYNC_PROCESSING_ERROR', {
+                    message: err.message,
+                    stack: err.stack,
+                    webhookId: req.query.id,
+                    type: req.query.type
+                });
+            }
+        })(); // ← Ejecutar sin await
+
+    } catch (err) {
+        console.error('❌ Error crítico en webhook handler:', err.message);
+        logger.error('WEBHOOK_HANDLER_CRITICAL_ERROR', {
+            message: err.message,
+            stack: err.stack
+        });
+        res.status(500).json({ error: 'Internal server error' });
     }
 };
 

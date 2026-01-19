@@ -100,13 +100,27 @@ export const verifyMercadoPagoSignature = (req, res, next) => {
                 console.warn('   → Mercado Pago sandbox no envía x-timestamp correctamente');
                 console.warn('   → Continuando sin validar firma completa (permitido en sandbox)');
             } else {
-                console.error('❌ PRODUCTION MODE: Headers de seguridad faltantes');
-                console.error('   Se requieren: x-signature, x-request-id, x-timestamp');
-                console.error(`   Modo actual: ${mpMode}`);
-                console.error('   Para testing, configurar: MERCADO_PAGO_MODE=sandbox');
-                return res.status(400).json({ 
-                    error: 'Missing security headers in production' 
-                });
+                // PRODUCCIÓN: Pero si es una prueba desde dashboard de MP (live_mode=false), aceptar
+                const bodyString = req.body.toString('utf-8');
+                try {
+                    const bodyObj = JSON.parse(bodyString);
+                    if (bodyObj.live_mode === false) {
+                        console.warn('🧪 [Webhook] Prueba desde dashboard de Mercado Pago detectada (live_mode: false)');
+                        console.warn('   → Aceptando sin validación de firma (para testing)');
+                    } else {
+                        console.error('❌ PRODUCTION MODE: Headers de seguridad faltantes');
+                        console.error('   Se requieren: x-signature, x-request-id');
+                        console.error(`   Modo actual: ${mpMode}`);
+                        return res.status(400).json({ 
+                            error: 'Missing security headers in production' 
+                        });
+                    }
+                } catch (parseError) {
+                    console.error('❌ PRODUCTION MODE: Headers de seguridad faltantes Y error parseando body');
+                    return res.status(400).json({ 
+                        error: 'Missing security headers in production' 
+                    });
+                }
             }
         }
 
