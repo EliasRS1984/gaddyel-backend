@@ -14,6 +14,7 @@ const adminSchema = new mongoose.Schema({
     
     // Timestamp
     createdAt: { type: Date, default: Date.now }
+});
 
 // 🔁 Middleware opcional para compatibilidad
 // Si por error alguien envía "contraseña", lo convertimos a "password"
