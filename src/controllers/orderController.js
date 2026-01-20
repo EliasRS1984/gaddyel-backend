@@ -4,6 +4,7 @@ import { Producto } from '../models/Product.js';
 import AdminUser from '../models/AdminUser.js';
 import MercadoPagoService from '../services/MercadoPagoService.js';
 import { validateObjectId, validateObjectIdArray } from '../validators/noSqlInjectionValidator.js';
+import SystemConfig from '../models/SystemConfig.js';
 
 /**
  * ✅ Crear nueva orden con validación segura
@@ -87,10 +88,12 @@ export const createOrder = async (req, res, next) => {
             });
         }
 
-        // ✅ Calcular costo de envío basado en cantidad (REGLA DE NEGOCIO)
+        // ✅ Obtener configuración del sistema para cálculo de envío
+        const systemConfig = await SystemConfig.obtenerConfigActual();
+        
+        // ✅ Calcular costo de envío basado en configuración global
         const cantidadProductos = validatedItems.reduce((sum, item) => sum + item.cantidad, 0);
-        const envioGratis = cantidadProductos >= 3;
-        const costoEnvioCalculado = envioGratis ? 0 : 12000;
+        const costoEnvioCalculado = systemConfig.calcularEnvio(cantidadProductos);
         const totalCalculado = subtotalCalculado + costoEnvioCalculado;
 
         console.log(`💰 Subtotal: ${subtotalCalculado}, Envío: ${costoEnvioCalculado}, Total: ${totalCalculado}`);
