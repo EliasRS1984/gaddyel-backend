@@ -99,6 +99,20 @@ class MercadoPagoService {
                 console.log(`   🎉 Envío gratis aplicado (3+ productos)`);
             }
 
+            // ✅ AGREGAR RECARGO POR PASARELA (si la orden lo trae calculado)
+            const surcharge = Number(order.ajustesPago?.monto) || 0;
+            if (surcharge > 0) {
+                const label = order.ajustesPago?.etiqueta || 'Recargo Mercado Pago';
+                items.push({
+                    id: `${order._id.toString()}-mp-fee`,
+                    title: label,
+                    quantity: 1,
+                    unit_price: surcharge,
+                    currency_id: 'ARS'
+                });
+                console.log(`   💳 Recargo pasarela agregado: ARS $${surcharge} (${label})`);
+            }
+
             // ✅ INFORMACIÓN DEL COMPRADOR (solo campos que MP acepta)
             // REQUERIDO: email | OPCIONAL: name, surname
             // ⚠️ NO incluir: phone, address (causa errores en validación)
@@ -149,7 +163,7 @@ class MercadoPagoService {
             // 🔍 DEBUG: Validar antes de enviar a MP
             console.log('\n🔍 [DEBUG] Validando preferencia...');
             console.log(`   Items: ${items.length} producto(s)`);
-            console.log(`   Total: ARS $${items.reduce((sum, i) => sum + (i.quantity * i.unit_price), 0)}`);
+            console.log(`   Total items: ARS $${items.reduce((sum, i) => sum + (i.quantity * i.unit_price), 0)}`);
             console.log(`   Comprador: ${payer.email}`);
             console.log(`   Auto-return: ${preferenceData.auto_return}`);
             console.log(`   Back URLs:`);
@@ -355,6 +369,17 @@ class MercadoPagoService {
             order.payment.mercadoPago.paymentMethod = paymentInfo.payment_method_id;
             order.payment.mercadoPago.transactionAmount = paymentInfo.transaction_amount;
             order.payment.mercadoPago.lastUpdate = new Date();
+
+            // Calcular fee efectivo si la API provee transaction_details
+            const netReceived = Number(paymentInfo.transaction_details?.net_received_amount);
+            if (!Number.isNaN(netReceived) && paymentInfo.transaction_amount) {
+                const feeAmount = Math.max(0, Number(paymentInfo.transaction_amount) - netReceived);
+                const percentEffective = feeAmount > 0 ? feeAmount / Number(paymentInfo.transaction_amount) : 0;
+                order.payment.mercadoPago.fee = {
+                    amount: feeAmount,
+                    percentEffective
+                };
+            }
 
             // ✅ Mapear estado de MP a estado de orden
             let nuevoEstadoPago = order.estadoPago;

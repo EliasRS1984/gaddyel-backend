@@ -163,6 +163,12 @@ const orderSchema = new mongoose.Schema({
             // Información adicional
             authorizationCode: String,
             merchantAccountId: String
+            ,
+            // Desglose de comisiones del procesador (calculado desde webhook)
+            fee: {
+                amount: { type: Number, default: 0 }, // Monto cobrado por MP
+                percentEffective: { type: Number, default: 0 } // fee/transactionAmount
+            }
         },
         
         // Método de pago general
@@ -171,6 +177,16 @@ const orderSchema = new mongoose.Schema({
             enum: ['mercadopago', 'transferencia', 'efectivo', 'otro'],
             default: 'mercadopago'
         }
+    },
+
+    // Ajustes de pago aplicados al total cobrado al cliente (p.ej., recargo por pasarela)
+    ajustesPago: {
+        pasarela: { type: String, default: 'mercadopago' },
+        modo: { type: String, enum: ['absorb', 'pass_through'], default: 'absorb' },
+        porcentaje: { type: Number, default: 0 }, // 0.0761 = 7.61%
+        fijo: { type: Number, default: 0 }, // ARS
+        monto: { type: Number, default: 0 }, // ARS agregado al total
+        etiqueta: { type: String, default: 'Recargo Mercado Pago' }
     },
     
     // Método de pago (extraído del webhook de MP)

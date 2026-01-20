@@ -318,6 +318,11 @@ async function procesarPago(paymentId, webhookLog) {
         // ✅ GUARDAR INFORMACIÓN COMPLETA DE TRANSACCIÓN
         // Esto se mostrará en el admin y en el cliente
         orden.payment = orden.payment || {};
+        const grossAmount = Number(payment.transaction_amount) || 0;
+        const netReceived = Number(payment.transaction_details?.net_received_amount) || null;
+        const feeAmount = netReceived !== null ? Math.max(0, grossAmount - netReceived) : null;
+        const percentEffective = feeAmount !== null && grossAmount > 0 ? feeAmount / grossAmount : null;
+
         orden.payment.mercadoPago = {
             preferenceId: payment.preference_id || undefined,
             paymentId: payment.id,
@@ -325,8 +330,8 @@ async function procesarPago(paymentId, webhookLog) {
             statusDetail: payment.status_detail,
             paymentType: payment.payment_type, // 'account_money', 'ticket', 'atm', 'credit_card', etc.
             paymentMethod: payment.payment_method?.id || 'unknown', // 'visa', 'master', 'amex', etc.
-            transactionAmount: payment.transaction_amount,
-            netAmount: payment.net_amount,
+            transactionAmount: grossAmount,
+            netAmount: netReceived ?? undefined,
             installments: payment.installments || 1,
             createdAt: new Date(payment.date_created),
             lastUpdate: new Date(payment.last_modified),
@@ -334,7 +339,11 @@ async function procesarPago(paymentId, webhookLog) {
             payerEmail: payment.payer?.email,
             payerId: payment.payer?.id,
             authorizationCode: payment.authorization_code,
-            merchantAccountId: payment.merchant_account_id
+            merchantAccountId: payment.merchant_account_id,
+            fee: {
+                amount: feeAmount ?? 0,
+                percentEffective: percentEffective ?? 0
+            }
         };
         orden.payment.method = 'mercadopago';
 

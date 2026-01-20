@@ -21,6 +21,18 @@
 
 **Calificación Global:** 90/100 (EXCELENTE - Mejoras menores pendientes)
 
+### 🧮 Gestión de comisiones (NUEVO)
+
+- Backend soporta dos modos de comisión de pasarela:
+    - `absorb` (default): no se traslada al cliente; solo se registra contablemente el fee real acreditado por MP (`transaction_details.net_received_amount`).
+    - `pass_through`: se agrega un ítem “Recargo Mercado Pago” calculado para netear el costo de la comisión.
+- Variables de entorno:
+    - `PAYMENT_FEE_MODE=absorb|pass_through`
+    - `MP_FEE_PERCENT=0.0761` (7.61%)
+    - `MP_FEE_FIXED=0` (ARS, opcional)
+    - `MP_FEE_LABEL="Recargo Mercado Pago"`
+- Fórmula del recargo: si se desea recibir neto X con comisión r y fijo f, se cobra C = (X + f) / (1 - r). El recargo mostrado es `C - X` (redondeado a pesos enteros).
+
 ### 🎉 **ACTUALIZACIÓN: 16 de enero de 2026 - CORRECCIONES CRÍTICAS IMPLEMENTADAS**
 
 **Fase 1 Completada:** Todas las vulnerabilidades críticas han sido resueltas.

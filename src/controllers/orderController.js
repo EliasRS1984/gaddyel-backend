@@ -4,6 +4,7 @@ import { Producto } from '../models/Product.js';
 import AdminUser from '../models/AdminUser.js';
 import MercadoPagoService from '../services/MercadoPagoService.js';
 import { validateObjectId, validateObjectIdArray } from '../validators/noSqlInjectionValidator.js';
+import { getPaymentFeeConfig, computeSurchargeForNetTarget } from '../config/paymentFees.js';
 
 /**
  * ✅ Crear nueva orden con validación segura
@@ -91,7 +92,26 @@ export const createOrder = async (req, res, next) => {
         const cantidadProductos = validatedItems.reduce((sum, item) => sum + item.cantidad, 0);
         const envioGratis = cantidadProductos >= 3;
         const costoEnvioCalculado = envioGratis ? 0 : 12000;
-        const totalCalculado = subtotalCalculado + costoEnvioCalculado;
+        let totalCalculado = subtotalCalculado + costoEnvioCalculado;
+
+        // ✅ Aplicar recargo por pasarela si está configurado en modo pass_through
+        const feeCfg = getPaymentFeeConfig();
+        let ajustesPago = {
+            pasarela: 'mercadopago',
+            modo: feeCfg.mode,
+            porcentaje: feeCfg.percent,
+            fijo: feeCfg.fixed,
+            monto: 0,
+            etiqueta: feeCfg.label
+        };
+
+        if (feeCfg.mode === 'pass_through' && (feeCfg.percent > 0 || feeCfg.fixed > 0)) {
+            const surcharge = computeSurchargeForNetTarget(totalCalculado, feeCfg.percent, feeCfg.fixed);
+            if (surcharge > 0) {
+                totalCalculado += surcharge;
+                ajustesPago.monto = surcharge;
+            }
+        }
 
         console.log(`💰 Subtotal: ${subtotalCalculado}, Envío: ${costoEnvioCalculado}, Total: ${totalCalculado}`);
 
@@ -167,6 +187,7 @@ export const createOrder = async (req, res, next) => {
             cantidadProductos,
             estadoPago: 'pending',
             estadoPedido: 'pendiente',
+            ajustesPago,
             datosComprador: {
                 nombre,
                 email,
