@@ -42,7 +42,33 @@ const productoSchema = new mongoose.Schema(
       }
     },
     personalizable: { type: Boolean, default: false },
-    precio: { type: Number, required: true, index: true },
+    
+    // PRICING: Sistema dual para manejar comisiones de pasarela
+    // precioBase: Lo que el negocio necesita recibir (sin comisión)
+    // precio (precioVenta): Lo que ve el cliente (ya incluye comisión MP)
+    precioBase: { 
+      type: Number, 
+      required: true,
+      index: true,
+      min: 0
+    },
+    precio: { 
+      type: Number, 
+      required: true, 
+      index: true,
+      min: 0
+    }, // precio = precioBase / (1 - tasaComision)
+    
+    // Metadatos de pricing
+    tasaComisionAplicada: { 
+      type: Number, 
+      default: 0.0761 
+    }, // Tasa usada en el último cálculo
+    fechaActualizacionPrecio: { 
+      type: Date, 
+      default: Date.now 
+    },
+    
     cantidadUnidades: { type: Number, default: 1 },
     propiedadesPersonalizadas: { type: Map, of: String, default: {} },
   },

@@ -17,6 +17,7 @@ import mercadoPagoRoutes from "./routes/mercadoPagoRoutes.js";
 import clientRoutes from "./routes/clientRoutes.js";
 import clientAuthRoutes from "./routes/clientAuthRoutes.js";
 import carouselRoutes from "./routes/carouselRoutes.js";
+import paymentConfigRoutes from "./routes/paymentConfig.js";
 
 import { applySecurity } from "./middleware/security.js"; 
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -196,6 +197,7 @@ app.get("/api/test/auth-protected", (req, res, next) => {
 app.use("/api/admin/auth", adminAuthRoutes(loginLimiter)); // login con limiter
 app.use("/api/admin/productos", adminProductosRoutes);     // CRUD protegido con verifyToken
 app.use("/api/admin/clientes", adminClientesRoutes);       // Gestión de clientes CRM
+app.use("/api/payment-config", paymentConfigRoutes);       // Configuración de comisiones (protegido)
 
 /* ===== RUTAS PÚBLICAS E-COMMERCE ===== */
 app.use("/api/pedidos", orderRoutes);                      // Crear pedidos (público) + listar (admin)
