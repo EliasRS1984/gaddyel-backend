@@ -18,12 +18,12 @@ import {
   obtenerHistorial,
   calcularPreview
 } from '../controllers/paymentConfigController.js';
-import { authenticateToken } from '../middleware/auth.js';
+import verifyToken from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
 // Proteger todas las rutas con autenticación de admin
-router.use(authenticateToken);
+router.use(verifyToken);
 
 // Obtener configuración actual
 router.get('/', obtenerConfiguracion);
