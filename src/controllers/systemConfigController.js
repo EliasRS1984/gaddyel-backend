@@ -477,7 +477,7 @@ export const migrarPrecios = async (req, res) => {
  * 3. Recalcula: precio = Math.ceil(precioBase / (1 - tasa))
  * 4. Actualiza precio y tasaComisionAplicada
  */
-const recalcularPrecios = async (req, res) => {
+export const recalcularPrecios = async (req, res) => {
   try {
     console.log('\n🔄 Iniciando recalculación masiva de precios...');
     
