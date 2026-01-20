@@ -115,12 +115,14 @@ export const crearProducto = async (req, res) => {
             tamanos,
             colores,
             personalizable,
+            precioBase,
             precio,
             cantidadUnidades,
             destacado,
             imagenSrc,
             imagenes,
-            propiedadesPersonalizadas
+            propiedadesPersonalizadas,
+            tasaComisionAplicada
         } = req.body;
 
         // Validación básica
@@ -132,6 +134,24 @@ export const crearProducto = async (req, res) => {
         const precioNumero = parseFloat(precio);
         if (isNaN(precioNumero) || precioNumero <= 0) {
             return res.status(400).json({ error: "Precio debe ser un número positivo" });
+        }
+
+        // ✅ NUEVO: Validar precioBase si se envía
+        let precioBaseNum = 0;
+        if (precioBase !== undefined) {
+            precioBaseNum = parseFloat(precioBase);
+            if (isNaN(precioBaseNum) || precioBaseNum < 0) {
+                return res.status(400).json({ error: "Precio Base debe ser un número no negativo" });
+            }
+        }
+
+        // ✅ NUEVO: Validar tasa si se envía
+        let tasa = 0.0761; // Valor por defecto
+        if (tasaComisionAplicada !== undefined) {
+            tasa = parseFloat(tasaComisionAplicada);
+            if (isNaN(tasa) || tasa < 0 || tasa > 1) {
+                return res.status(400).json({ error: "Tasa de comisión debe estar entre 0 y 1" });
+            }
         }
 
         // Validar que cantidadUnidades sea un número válido y no negativo
@@ -154,8 +174,11 @@ export const crearProducto = async (req, res) => {
             tamanos: Array.isArray(tamanos) ? tamanos : (tamanos ? tamanos.split(",") : []),
             colores: Array.isArray(colores) ? colores : (colores ? colores.split(",") : []),
             personalizable,
+            precioBase: precioBaseNum,
             precio: precioNumero,
             cantidadUnidades: stock,
+            tasaComisionAplicada: tasa,
+            fechaActualizacionPrecio: new Date(),
             destacado: destacado === true || destacado === 'true',
             imagenSrc: imagenSrc || null,
             imagenes: imagenesLimpias,
@@ -195,6 +218,28 @@ export const editarProducto = async (req, res) => {
             data.precio = precioNumero;
         }
 
+        // ✅ NUEVO: Validar y guardar campos de pricing DIRECTAMENTE
+        if (data.precioBase !== undefined) {
+            const precioBase = parseFloat(data.precioBase);
+            if (isNaN(precioBase) || precioBase < 0) {
+                return res.status(400).json({ error: "Precio Base debe ser un número no negativo" });
+            }
+            data.precioBase = precioBase;
+        }
+
+        if (data.tasaComisionAplicada !== undefined) {
+            const tasa = parseFloat(data.tasaComisionAplicada);
+            if (isNaN(tasa) || tasa < 0 || tasa > 1) {
+                return res.status(400).json({ error: "Tasa de comisión debe estar entre 0 y 1" });
+            }
+            data.tasaComisionAplicada = tasa;
+        }
+
+        // ✅ NUEVO: Actualizar fecha de última actualización de precio
+        if (data.precioBase !== undefined || data.precio !== undefined) {
+            data.fechaActualizacionPrecio = new Date();
+        }
+
         // Validar stock si se envía
         if (data.cantidadUnidades !== undefined) {
             const stock = parseInt(data.cantidadUnidades);
@@ -216,7 +261,14 @@ export const editarProducto = async (req, res) => {
             if (!data.imagenes.length) data.imagenes = [{ src: data.imagenSrc, alt: data.nombre }];
         }
 
-        const actualizado = await Producto.findByIdAndUpdate(req.params.id, data, { new: true });
+        // ✅ IMPORTANTE: Usar $set para asegurar que los campos se actualizan directamente
+        // NO dentro de propiedadesPersonalizadas
+        const actualizado = await Producto.findByIdAndUpdate(
+            req.params.id, 
+            { $set: data },
+            { new: true, runValidators: false }
+        );
+        
         if (!actualizado) return res.status(404).json({ error: 'Producto no encontrado' });
         res.json(actualizado);
     } catch (error) {

@@ -339,8 +339,26 @@ export const migrarPrecios = async (req, res) => {
 
     const TASA_MIGRACION = 0.0761;
 
+    // DEBUG: Ver estadísticas de BD
+    console.log('\n📊 ===== DIAGNÓSTICO DE PRODUCTOS =====');
+    const todosProductos = await Producto.find().select('_id nombre precio precioBase').lean();
+    console.log(`Total productos en BD: ${todosProductos.length}`);
+    
+    const conPrecioBase = todosProductos.filter(p => p.precioBase && p.precioBase > 0).length;
+    const sinPrecioBase = todosProductos.filter(p => !p.precioBase || p.precioBase <= 0).length;
+    
+    console.log(`✅ Con precioBase válido: ${conPrecioBase}`);
+    console.log(`❌ Sin precioBase o = 0: ${sinPrecioBase}`);
+    
+    if (sinPrecioBase > 0) {
+      console.log('\n📋 Primeros 5 productos sin precioBase:');
+      todosProductos.filter(p => !p.precioBase || p.precioBase <= 0).slice(0, 5).forEach((p, idx) => {
+        console.log(`  [${idx+1}] "${p.nombre}" | precio: $${p.precio} | precioBase: ${p.precioBase || 'NO EXISTE'}`);
+      });
+    }
+    console.log('===================================\n');
+
     // Encontrar productos sin precioBase válido
-    // Incluye: undefined, null, 0, o menor que precio * 0.5 (probablemente erróneo)
     const productosParaMigrar = await Producto.find({
       $or: [
         { precioBase: { $exists: false } },
@@ -358,7 +376,12 @@ export const migrarPrecios = async (req, res) => {
         data: {
           migrados: 0,
           errores: 0,
-          total: 0
+          total: 0,
+          diagnostico: {
+            totalProductos: todosProductos.length,
+            conPrecioBase,
+            sinPrecioBase
+          }
         }
       });
     }
@@ -440,10 +463,121 @@ export const migrarPrecios = async (req, res) => {
   }
 };
 
+/**
+ * ENDPOINT: Recalcular TODOS los precios de venta usando nueva tasa
+ * POST /api/system-config/recalcular-precios
+ * 
+ * Cuando cambias la tasa de comisión de Mercado Pago,
+ * esta función recalcula el precio de venta de TODOS los productos
+ * manteniendo el precioBase intacto.
+ * 
+ * FLUJO:
+ * 1. Obtiene configuración actual
+ * 2. Busca TODOS los productos que tengan precioBase
+ * 3. Recalcula: precio = Math.ceil(precioBase / (1 - tasa))
+ * 4. Actualiza precio y tasaComisionAplicada
+ */
+const recalcularPrecios = async (req, res) => {
+  try {
+    console.log('\n🔄 Iniciando recalculación masiva de precios...');
+    
+    // Obtener configuración actual
+    const config = await SystemConfig.obtenerConfiguracion();
+    const tasaActual = config.comisiones.mercadoPago.tasaComision;
+    
+    console.log(`📊 Tasa actual de comisión: ${(tasaActual * 100).toFixed(2)}%`);
+    
+    // Buscar TODOS los productos que tengan precioBase
+    const productosConPrecioBase = await Producto.find({
+      precioBase: { $exists: true, $gt: 0 }
+    }).select('_id nombre precioBase precio tasaComisionAplicada');
+
+    console.log(`📦 Productos encontrados: ${productosConPrecioBase.length}`);
+
+    if (productosConPrecioBase.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No hay productos con precioBase para recalcular.',
+        data: {
+          recalculados: 0,
+          errores: 0,
+          total: 0
+        }
+      });
+    }
+
+    // Recalcular cada producto
+    let recalculados = 0;
+    let errores = [];
+
+    for (const producto of productosConPrecioBase) {
+      try {
+        // Calcular nuevo precio usando precioBase y tasa actual
+        const precioNuevo = config.calcularPrecioVenta(producto.precioBase);
+
+        // Actualizar producto
+        const actualizado = await Producto.findByIdAndUpdate(
+          producto._id,
+          {
+            $set: {
+              precio: precioNuevo,
+              tasaComisionAplicada: tasaActual,
+              fechaActualizacionPrecio: new Date()
+            }
+          },
+          { 
+            new: true,
+            runValidators: false
+          }
+        );
+
+        if (!actualizado) {
+          throw new Error('Producto no encontrado');
+        }
+
+        recalculados++;
+        console.log(`✅ [${recalculados}/${productosConPrecioBase.length}] ${producto.nombre} | Base: $${producto.precioBase} → Venta: $${precioNuevo} (antes: $${producto.precio})`);
+
+      } catch (error) {
+        errores.push({
+          productoId: producto._id,
+          nombre: producto.nombre,
+          precioBase: producto.precioBase,
+          error: error.message
+        });
+        console.error(`❌ Error en ${producto.nombre}: ${error.message}`);
+      }
+    }
+
+    console.log(`\n✅ Recalculación completada: ${recalculados} exitosos, ${errores.length} errores\n`);
+
+    res.status(200).json({
+      success: true,
+      message: `Recalculación completada: ${recalculados} productos actualizados`,
+      data: {
+        recalculados,
+        errores: errores.length,
+        total: productosConPrecioBase.length,
+        tasaAplicada: tasaActual,
+        detalleErrores: errores.length > 0 ? errores : undefined
+      }
+    });
+
+  } catch (error) {
+    console.error('Error en recalculación de precios:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al ejecutar recalculación de precios',
+      error: error.message
+    });
+  }
+};
+
 export default {
   obtenerConfiguracion,
   actualizarConfiguracion,
   obtenerHistorial,
   calcularPreviewPrecio,
-  migrarPrecios
+  migrarPrecios,
+  recalcularPrecios
 };
