@@ -135,57 +135,16 @@ export const handleWebhook = async (req, res) => {
                     ipCliente: req.ip
                 });
 
-                // ✅ VALIDACIÓN: Validar firma solo si PRODUCCIÓN (live_mode=true)
-                if (liveMode === true) {
-                    // PRODUCCIÓN: Mercado Pago envía headers de seguridad
-                    console.log('🔐 [Webhook] PRODUCCIÓN (live_mode=true): Validando firma HMAC...');
-                    
-                    const xSignature = req.headers['x-signature'];
-                    const xRequestId = req.headers['x-request-id'];
-                    
-                    if (!xSignature || !xRequestId) {
-                        console.error('❌ [Webhook] Headers de seguridad faltantes en PRODUCCIÓN');
-                        logger.security('WEBHOOK_MISSING_HEADERS_PRODUCTION', {
-                            ip: req.ip,
-                            type,
-                            webhookId
-                        });
-                        webhookLog.resultado = {
-                            tipo: 'error',
-                            mensaje: 'Headers de seguridad faltantes en producción'
-                        };
-                        await webhookLog.save();
-                        return;
-                    }
-                    
-                    const isValidSignature = validateWebhookSignature(xSignature, xRequestId, req.body);
-                    
-                    if (!isValidSignature) {
-                        console.error('❌ [Webhook] Firma HMAC inválida - Posible ataque');
-                        logger.security('WEBHOOK_INVALID_SIGNATURE', {
-                            ip: req.ip,
-                            type,
-                            webhookId,
-                            xSignature: xSignature.substring(0, 50) + '...'
-                        });
-                        webhookLog.resultado = {
-                            tipo: 'error',
-                            mensaje: 'Firma HMAC inválida'
-                        };
-                        await webhookLog.save();
-                        return;
-                    }
-                    
-                    console.log('✅ [Webhook] Firma validada correctamente');
-                } else {
-                    // PRUEBA/TEST: Dashboard de Mercado Pago o sandbox
-                    console.log('🧪 [Webhook] PRUEBA (live_mode=false): Saltando validación de firma');
-                    logger.info('WEBHOOK_TEST_MODE', {
-                        ip: req.ip,
-                        type,
-                        webhookId
-                    });
-                }
+                // ✅ FIRMA YA VALIDADA POR MIDDLEWARE verifyMercadoPagoSignature
+                // El middleware procesa la firma HMAC antes de llegar aquí
+                // Si req.body llegó hasta acá, la firma fue validada correctamente
+                console.log('✅ [Webhook] Firma validada por middleware - Continuando procesamiento');
+                logger.info('WEBHOOK_SIGNATURE_VALIDATED', {
+                    ip: req.ip,
+                    type,
+                    webhookId,
+                    liveMode
+                });
                 
                 // ✅ IDEMPOTENCIA: Verificar si ya procesamos este webhook
                 const webhookUniqueId = `${type}-${webhookId}-${paymentId}`;

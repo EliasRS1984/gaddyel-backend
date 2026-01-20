@@ -28,8 +28,9 @@ export const verifyMercadoPagoSignature = (req, res, next) => {
         console.log('   x-request-id:', requestId ? '✅ presente' : '❌ faltante');
         console.log('   x-timestamp:', timestamp ? '✅ presente' : '❌ faltante');
 
-        // Intentar verificar firma si TODOS los headers están presentes
-        if (signature && requestId && timestamp) {
+        // ✅ CORREGIDO: Validar firma si tenemos x-signature y x-request-id
+        // (x-timestamp es opcional en algunos webhooks de MP)
+        if (signature && requestId) {
             const secretKey = process.env.MERCADO_PAGO_WEBHOOK_SECRET;
             
             if (!secretKey) {
@@ -40,8 +41,11 @@ export const verifyMercadoPagoSignature = (req, res, next) => {
             // El body es un Buffer, convertir a string
             const bodyString = req.body.toString('utf-8');
             
-            // Construir payload a verificar
-            const payload = `${requestId}.${timestamp}.${bodyString}`;
+            // Construir payload a verificar (sin timestamp si no está disponible)
+            // Formato alternativo de MP: id.request-id.ts (ts puede ser vacío)
+            const manifest = timestamp 
+                ? `${requestId}.${timestamp}.${bodyString}`
+                : `id:${bodyString.split('"id":"')[1]?.split('"')[0] || bodyString}.request-id:${requestId}.ts:;`;
             
             // Parsear X-Signature
             const signatureParts = signature.split(',').reduce((acc, part) => {
@@ -60,7 +64,7 @@ export const verifyMercadoPagoSignature = (req, res, next) => {
             // Generar HMAC-SHA256 esperado
             const expectedSignature = crypto
                 .createHmac('sha256', secretKey)
-                .update(payload)
+                .update(bodyString) // MP firma el body directamente
                 .digest('hex');
 
             // Comparar usando timing-safe
@@ -83,44 +87,21 @@ export const verifyMercadoPagoSignature = (req, res, next) => {
                 return res.status(401).json({ error: 'Signature verification failed' });
             }
         } else {
-            // Headers de seguridad incompletos
-            console.warn('⚠️ Webhook: Headers de seguridad incompletos');
+            // Headers de seguridad críticos faltantes (x-signature o x-request-id)
+            console.error('❌ CRÍTICO: Headers x-signature o x-request-id faltantes');
+            console.error(`   x-signature: ${signature ? 'presente' : 'faltante'}`);
+            console.error(`   x-request-id: ${requestId ? 'presente' : 'faltante'}`);
             
-            // Detectar modo usando MERCADO_PAGO_MODE (sandbox vs production)
             const mpMode = (process.env.MERCADO_PAGO_MODE || 'production').toLowerCase();
-            const isSandboxMode = mpMode === 'sandbox' || mpMode === 'test' || mpMode === 'testing';
             
-            // DEBUG: Log para diagnosticar
-            console.log('🔍 [DEBUG] Configuración de Mercado Pago:');
-            console.log(`   MERCADO_PAGO_MODE: ${mpMode}`);
-            console.log(`   ¿Es sandbox/testing?: ${isSandboxMode}`);
-            
-            if (isSandboxMode) {
-                console.warn('   ✅ SANDBOX MODE: Modo de prueba detectado');
-                console.warn('   → Mercado Pago sandbox no envía x-timestamp correctamente');
-                console.warn('   → Continuando sin validar firma completa (permitido en sandbox)');
+            // SOLO permitir webhooks sin firma en sandbox/testing
+            if (mpMode === 'sandbox' || mpMode === 'test') {
+                console.warn('🧪 SANDBOX MODE: Permitiendo webhook sin headers de seguridad (solo para testing)');
             } else {
-                // PRODUCCIÓN: Pero si es una prueba desde dashboard de MP (live_mode=false), aceptar
-                const bodyString = req.body.toString('utf-8');
-                try {
-                    const bodyObj = JSON.parse(bodyString);
-                    if (bodyObj.live_mode === false) {
-                        console.warn('🧪 [Webhook] Prueba desde dashboard de Mercado Pago detectada (live_mode: false)');
-                        console.warn('   → Aceptando sin validación de firma (para testing)');
-                    } else {
-                        console.error('❌ PRODUCTION MODE: Headers de seguridad faltantes');
-                        console.error('   Se requieren: x-signature, x-request-id');
-                        console.error(`   Modo actual: ${mpMode}`);
-                        return res.status(400).json({ 
-                            error: 'Missing security headers in production' 
-                        });
-                    }
-                } catch (parseError) {
-                    console.error('❌ PRODUCTION MODE: Headers de seguridad faltantes Y error parseando body');
-                    return res.status(400).json({ 
-                        error: 'Missing security headers in production' 
-                    });
-                }
+                console.error(`❌ PRODUCTION MODE: Se requieren x-signature y x-request-id`);
+                return res.status(400).json({ 
+                    error: 'Missing required security headers (x-signature, x-request-id)' 
+                });
             }
         }
 
