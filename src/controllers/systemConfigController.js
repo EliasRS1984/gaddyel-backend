@@ -317,9 +317,106 @@ export const calcularPreviewPrecio = async (req, res) => {
   }
 };
 
+/**
+ * POST /api/system-config/migrate-pricing
+ * Ejecutar migración de precios (agregar precioBase a productos existentes)
+ * 
+ * FLUJO:
+ * 1. Encontrar productos sin precioBase (o con precioBase = 0)
+ * 2. Para cada producto: calcular precioBase = precio * (1 - tasa)
+ * 3. Actualizar documento
+ * 4. Retornar resumen de migración
+ * 
+ * ⚠️ PROTEGIDO: Solo admins pueden ejecutar
+ */
+export const migrarPrecios = async (req, res) => {
+  try {
+    console.log('\n🔄 Iniciando migración de precios desde endpoint...\n');
+
+    const TASA_MIGRACION = 0.0761;
+
+    // Encontrar productos sin precioBase
+    const productosParaMigrar = await Producto.find({
+      $or: [
+        { precioBase: { $exists: false } },
+        { precioBase: null },
+        { precioBase: { $eq: 0 } }
+      ]
+    });
+
+    console.log(`📊 Productos encontrados sin precioBase: ${productosParaMigrar.length}`);
+
+    if (productosParaMigrar.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No hay productos para migrar',
+        data: {
+          migrados: 0,
+          errores: 0,
+          total: 0
+        }
+      });
+    }
+
+    // Migrar cada producto
+    let migrados = 0;
+    let errores = [];
+
+    for (const producto of productosParaMigrar) {
+      try {
+        const precioBase = producto.precio * (1 - TASA_MIGRACION);
+        const precioBaseRedondeado = Math.round(precioBase * 100) / 100;
+
+        await Producto.findByIdAndUpdate(
+          producto._id,
+          {
+            precioBase: precioBaseRedondeado,
+            tasaComisionAplicada: TASA_MIGRACION,
+            fechaActualizacionPrecio: new Date()
+          },
+          { new: true }
+        );
+
+        migrados++;
+        console.log(`✅ [${migrados}/${productosParaMigrar.length}] ${producto.nombre}`);
+
+      } catch (error) {
+        errores.push({
+          productoId: producto._id,
+          nombre: producto.nombre,
+          error: error.message
+        });
+        console.error(`❌ Error en ${producto.nombre}: ${error.message}`);
+      }
+    }
+
+    console.log(`\n✅ Migración completada: ${migrados} exitosos, ${errores.length} errores\n`);
+
+    res.status(200).json({
+      success: true,
+      message: `Migración completada: ${migrados} productos actualizados`,
+      data: {
+        migrados,
+        errores: errores.length,
+        total: productosParaMigrar.length,
+        detalleErrores: errores.length > 0 ? errores : undefined
+      }
+    });
+
+  } catch (error) {
+    console.error('Error en migración de precios:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al ejecutar migración de precios',
+      error: error.message
+    });
+  }
+};
+
 export default {
   obtenerConfiguracion,
   actualizarConfiguracion,
   obtenerHistorial,
-  calcularPreviewPrecio
+  calcularPreviewPrecio,
+  migrarPrecios
 };

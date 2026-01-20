@@ -6,6 +6,7 @@
  * - PUT    /api/system-config              - Actualizar configuración
  * - GET    /api/system-config/historial    - Ver historial de cambios
  * - POST   /api/system-config/preview-precio - Calcular preview de precio
+ * - POST   /api/system-config/migrate-pricing - Ejecutar migración de precios
  * 
  * SEGURIDAD:
  * - Todos los endpoints requieren autenticación de admin
@@ -16,7 +17,8 @@ import {
   obtenerConfiguracion,
   actualizarConfiguracion,
   obtenerHistorial,
-  calcularPreviewPrecio
+  calcularPreviewPrecio,
+  migrarPrecios
 } from '../controllers/systemConfigController.js';
 import verifyToken from '../middleware/authMiddleware.js';
 
@@ -36,5 +38,8 @@ router.get('/historial', obtenerHistorial);
 
 // Calcular preview de precios
 router.post('/preview-precio', calcularPreviewPrecio);
+
+// Ejecutar migración de precios (agregar precioBase a productos existentes)
+router.post('/migrate-pricing', migrarPrecios);
 
 export default router;
