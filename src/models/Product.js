@@ -48,9 +48,10 @@ const productoSchema = new mongoose.Schema(
     // precio (precioVenta): Lo que ve el cliente (ya incluye comisión MP)
     precioBase: { 
       type: Number, 
-      required: true,
+      required: false, // Opcional para permitir migración de productos antiguos
       index: true,
-      min: 0
+      min: 0,
+      default: 0
     },
     precio: { 
       type: Number, 

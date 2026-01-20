@@ -177,6 +177,11 @@ systemConfigSchema.methods.calcularEnvio = function(cantidadProductos) {
 
 /**
  * Calcular precio de venta a partir de precio base (con comisión MP)
+ * 
+ * ⚠️ IMPORTANTE: Redondeo HACIA ARRIBA (ceiling) sin decimales
+ * - Asegura que Mercado Pago nunca cobre más de lo calculado
+ * - Números enteros evitan problemas de precisión en pasarelas
+ * Ejemplo: 1082.36 → 1083
  */
 systemConfigSchema.methods.calcularPrecioVenta = function(precioBase) {
   const r = this.comisiones.mercadoPago.tasaComision;
@@ -185,12 +190,13 @@ systemConfigSchema.methods.calcularPrecioVenta = function(precioBase) {
   // Fórmula: PrecioVenta = (PrecioBase + f) / (1 - r)
   const precioVenta = (precioBase + f) / (1 - r);
   
-  // Redondear a 2 decimales
-  return Math.round(precioVenta * 100) / 100;
+  // Redondear HACIA ARRIBA a número entero (sin decimales)
+  return Math.ceil(precioVenta);
 };
 
 /**
  * Calcular precio base a partir de precio de venta (reversa)
+ * Fórmula inversa: PrecioBase = PrecioVenta * (1 - r) - f
  */
 systemConfigSchema.methods.calcularPrecioBase = function(precioVenta) {
   const r = this.comisiones.mercadoPago.tasaComision;
@@ -199,7 +205,7 @@ systemConfigSchema.methods.calcularPrecioBase = function(precioVenta) {
   // Fórmula inversa: PrecioBase = PrecioVenta * (1 - r) - f
   const precioBase = precioVenta * (1 - r) - f;
   
-  return Math.round(precioBase * 100) / 100;
+  return Math.ceil(precioBase);
 };
 
 const SystemConfig = mongoose.model('SystemConfig', systemConfigSchema);

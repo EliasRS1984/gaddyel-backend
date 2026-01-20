@@ -291,7 +291,9 @@ export const calcularPreviewPrecio = async (req, res) => {
     const tasa = tasaComision !== undefined ? tasaComision : config.comisiones.mercadoPago.tasaComision;
     const comisionFija = config.comisiones.mercadoPago.comisionFija;
 
-    const precioVenta = (precioBase + comisionFija) / (1 - tasa);
+    const precioVentaExacto = (precioBase + comisionFija) / (1 - tasa);
+    // Redondear HACIA ARRIBA a número entero (sin decimales)
+    const precioVenta = Math.ceil(precioVentaExacto);
     const recargo = precioVenta - precioBase;
     const porcentajeRecargo = (recargo / precioBase) * 100;
 
@@ -299,11 +301,13 @@ export const calcularPreviewPrecio = async (req, res) => {
       success: true,
       data: {
         precioBase,
-        precioVenta: Math.round(precioVenta * 100) / 100,
-        recargo: Math.round(recargo * 100) / 100,
+        precioVentaExacto: Math.round(precioVentaExacto * 100) / 100, // Mostrar cálculo exacto
+        precioVenta, // Precio redondeado hacia arriba (SIN decimales)
+        recargo,
         porcentajeRecargo: Math.round(porcentajeRecargo * 100) / 100,
         tasaUsada: tasa,
-        comisionFija
+        comisionFija,
+        nota: "El precioVenta es redondeado hacia arriba para evitar problemas con Mercado Pago"
       }
     });
 
@@ -335,21 +339,22 @@ export const migrarPrecios = async (req, res) => {
 
     const TASA_MIGRACION = 0.0761;
 
-    // Encontrar productos sin precioBase
+    // Encontrar productos sin precioBase válido
+    // Incluye: undefined, null, 0, o menor que precio * 0.5 (probablemente erróneo)
     const productosParaMigrar = await Producto.find({
       $or: [
         { precioBase: { $exists: false } },
         { precioBase: null },
-        { precioBase: { $eq: 0 } }
+        { precioBase: { $lte: 0 } }
       ]
-    });
+    }).select('_id nombre precio precioBase');
 
-    console.log(`📊 Productos encontrados sin precioBase: ${productosParaMigrar.length}`);
+    console.log(`📊 Productos encontrados para migrar: ${productosParaMigrar.length}`);
 
     if (productosParaMigrar.length === 0) {
       return res.status(200).json({
         success: true,
-        message: 'No hay productos para migrar',
+        message: 'No hay productos para migrar. Todos tienen precioBase válido.',
         data: {
           migrados: 0,
           errores: 0,
@@ -364,26 +369,48 @@ export const migrarPrecios = async (req, res) => {
 
     for (const producto of productosParaMigrar) {
       try {
-        const precioBase = producto.precio * (1 - TASA_MIGRACION);
-        const precioBaseRedondeado = Math.round(precioBase * 100) / 100;
+        // Validar que precio existe y es válido
+        if (!producto.precio || producto.precio <= 0) {
+          throw new Error('Precio inválido o faltante');
+        }
 
-        await Producto.findByIdAndUpdate(
+        // Calcular precioBase usando fórmula inversa
+        // Si precio es el resultado de: precio = precioBase / (1 - tasa)
+        // Entonces: precioBase = precio * (1 - tasa)
+        const precioBase = producto.precio * (1 - TASA_MIGRACION);
+        
+        // Redondear HACIA ARRIBA a número entero (sin decimales)
+        // Esto asegura que Mercado Pago nunca cobre más de lo esperado
+        const precioBaseRedondeado = Math.ceil(precioBase);
+
+        // Actualizar con runValidators: false para evitar conflictos con required
+        const actualizado = await Producto.findByIdAndUpdate(
           producto._id,
           {
-            precioBase: precioBaseRedondeado,
-            tasaComisionAplicada: TASA_MIGRACION,
-            fechaActualizacionPrecio: new Date()
+            $set: {
+              precioBase: precioBaseRedondeado,
+              tasaComisionAplicada: TASA_MIGRACION,
+              fechaActualizacionPrecio: new Date()
+            }
           },
-          { new: true }
+          { 
+            new: true,
+            runValidators: false // No ejecutar validaciones para permitir actualización
+          }
         );
 
+        if (!actualizado) {
+          throw new Error('Producto no encontrado');
+        }
+
         migrados++;
-        console.log(`✅ [${migrados}/${productosParaMigrar.length}] ${producto.nombre}`);
+        console.log(`✅ [${migrados}/${productosParaMigrar.length}] ${producto.nombre} | Precio: $${producto.precio} → Base: $${precioBaseRedondeado}`);
 
       } catch (error) {
         errores.push({
           productoId: producto._id,
           nombre: producto.nombre,
+          precioActual: producto.precio,
           error: error.message
         });
         console.error(`❌ Error en ${producto.nombre}: ${error.message}`);

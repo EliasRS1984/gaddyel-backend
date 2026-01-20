@@ -27,7 +27,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // Importar modelo
-import Product from '../models/Product.js';
+import { Producto } from '../models/Product.js';
 
 const TASA_MIGRACION = 0.0761; // Tasa MP estándar
 
@@ -41,7 +41,7 @@ async function migrateProductPricing() {
     console.log('✅ Conectado a MongoDB\n');
 
     // PASO 1: Encontrar productos sin precioBase
-    const productosParaMigrar = await Product.find({
+    const productosParaMigrar = await Producto.find({
       $or: [
         { precioBase: { $exists: false } },
         { precioBase: null },
@@ -68,7 +68,7 @@ async function migrateProductPricing() {
         const precioBaseRedondeado = Math.round(precioBase * 100) / 100;
 
         // Actualizar documento
-        await Product.findByIdAndUpdate(
+        await Producto.findByIdAndUpdate(
           producto._id,
           {
             precioBase: precioBaseRedondeado,
@@ -110,7 +110,7 @@ async function migrateProductPricing() {
     console.log('='.repeat(60) + '\n');
 
     // PASO 4: Verificación
-    const productosVerificacion = await Product.find({ precioBase: { $eq: 0 } });
+    const productosVerificacion = await Producto.find({ precioBase: { $eq: 0 } });
     if (productosVerificacion.length === 0) {
       console.log('✅ Verificación exitosa: Todos los productos tienen precioBase\n');
     } else {
