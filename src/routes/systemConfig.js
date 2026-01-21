@@ -2,12 +2,13 @@
  * Routes: SystemConfig
  * 
  * ENDPOINTS:
- * - GET    /api/system-config              - Obtener configuración actual
- * - PUT    /api/system-config              - Actualizar configuración
- * - GET    /api/system-config/historial    - Ver historial de cambios
- * - POST   /api/system-config/preview-precio - Calcular preview de precio
- * - POST   /api/system-config/migrate-pricing - Ejecutar migración de precios (una vez)
- * - POST   /api/system-config/recalcular-precios - Recalcular todos los precios con nueva tasa
+ * - GET    /api/system-config                      - Obtener configuración actual
+ * - PUT    /api/system-config                      - Actualizar configuración
+ * - GET    /api/system-config/historial            - Ver historial de cambios
+ * - POST   /api/system-config/preview-precio       - Calcular preview de precio
+ * - POST   /api/system-config/migrate-pricing      - Ejecutar migración de precios (una vez)
+ * - POST   /api/system-config/recalcular-precios   - Recalcular todos los precios con nueva tasa
+ * - POST   /api/system-config/limpiar-estructura   - Limpiar estructura vieja de precios en propiedadesPersonalizadas
  * 
  * SEGURIDAD:
  * - Todos los endpoints requieren autenticación de admin
@@ -20,7 +21,8 @@ import {
   obtenerHistorial,
   calcularPreviewPrecio,
   migrarPrecios,
-  recalcularPrecios
+  recalcularPrecios,
+  limpiarEstructuraPrecios
 } from '../controllers/systemConfigController.js';
 import verifyToken from '../middleware/authMiddleware.js';
 
@@ -46,5 +48,8 @@ router.post('/migrate-pricing', migrarPrecios);
 
 // Recalcular TODOS los precios con nueva tasa de comisión
 router.post('/recalcular-precios', recalcularPrecios);
+
+// Limpiar estructura: mover campos de precioBase desde propiedadesPersonalizadas a nivel raíz
+router.post('/limpiar-estructura', limpiarEstructuraPrecios);
 
 export default router;

@@ -573,11 +573,132 @@ export const recalcularPrecios = async (req, res) => {
   }
 };
 
+/**
+ * ENDPOINT: Limpiar estructura de precios en productos viejos
+ * POST /api/system-config/limpiar-estructura-precios
+ * 
+ * Migración de datos: Mueve campos de pricing de propiedadesPersonalizadas
+ * a nivel raíz, aplicando Math.ceil() para eliminar decimales.
+ * 
+ * FLUJO:
+ * 1. Busca productos donde precioBase está en propiedadesPersonalizadas
+ * 2. Mueve: precioBase, tasaComisionAplicada, fechaActualizacionPrecio a raíz
+ * 3. Aplica Math.ceil() a precios para eliminar decimales
+ * 4. PRESERVA propiedadesPersonalizadas (solo remueve esos 3 campos)
+ * 5. Retorna resumen de migración
+ */
+export const limpiarEstructuraPrecios = async (req, res) => {
+  try {
+    console.log('\n🧹 Iniciando limpieza de estructura de precios...');
+
+    // Buscar productos con campos en propiedadesPersonalizadas
+    const productosConEstructuraVieja = await Producto.find({
+      "propiedadesPersonalizadas.precioBase": { $exists: true }
+    }).select('_id nombre precio propiedadesPersonalizadas');
+
+    console.log(`📦 Productos con estructura vieja: ${productosConEstructuraVieja.length}`);
+
+    if (productosConEstructuraVieja.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No hay productos con estructura vieja para limpiar.',
+        data: {
+          limpiados: 0,
+          errores: 0,
+          total: 0
+        }
+      });
+    }
+
+    let limpiados = 0;
+    let errores = [];
+
+    for (const producto of productosConEstructuraVieja) {
+      try {
+        const props = producto.propiedadesPersonalizadas;
+
+        // Extraer valores de propiedadesPersonalizadas
+        const precioBase = parseFloat(props.precioBase);
+        const tasaComision = parseFloat(props.tasaComisionAplicada) || 0.0761;
+        const fechaActualizacion = props.fechaActualizacionPrecio || new Date();
+        const precioActual = parseFloat(producto.precio);
+
+        // Aplicar Math.ceil() para eliminar decimales
+        const precioBaseRedondeado = Math.ceil(precioBase);
+        const precioRedondeado = Math.ceil(precioActual);
+
+        // Crear nueva versión de propiedadesPersonalizadas SIN los 3 campos
+        const propiedadesLimpias = { ...props };
+        delete propiedadesLimpias.precioBase;
+        delete propiedadesLimpias.tasaComisionAplicada;
+        delete propiedadesLimpias.fechaActualizacionPrecio;
+
+        // Actualizar producto
+        const actualizado = await Producto.findByIdAndUpdate(
+          producto._id,
+          {
+            $set: {
+              precioBase: precioBaseRedondeado,
+              precio: precioRedondeado,
+              tasaComisionAplicada: tasaComision,
+              fechaActualizacionPrecio: new Date(fechaActualizacion),
+              propiedadesPersonalizadas: propiedadesLimpias
+            }
+          },
+          { 
+            new: true,
+            runValidators: false
+          }
+        );
+
+        if (!actualizado) {
+          throw new Error('Producto no encontrado');
+        }
+
+        limpiados++;
+        console.log(`✅ [${limpiados}/${productosConEstructuraVieja.length}] ${producto.nombre}`);
+        console.log(`   Base: ${precioBase} → ${precioBaseRedondeado} (redondeado)`);
+        console.log(`   Venta: ${precioActual} → ${precioRedondeado} (redondeado)`);
+
+      } catch (error) {
+        errores.push({
+          productoId: producto._id,
+          nombre: producto.nombre,
+          error: error.message
+        });
+        console.error(`❌ Error en ${producto.nombre}: ${error.message}`);
+      }
+    }
+
+    console.log(`\n✅ Limpieza completada: ${limpiados} exitosos, ${errores.length} errores\n`);
+
+    res.status(200).json({
+      success: true,
+      message: `Limpieza completada: ${limpiados} productos migrados`,
+      data: {
+        limpiados,
+        errores: errores.length,
+        total: productosConEstructuraVieja.length,
+        detalleErrores: errores.length > 0 ? errores : undefined
+      }
+    });
+
+  } catch (error) {
+    console.error('Error en limpieza de estructura:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al ejecutar limpieza de estructura',
+      error: error.message
+    });
+  }
+};
+
 export default {
   obtenerConfiguracion,
   actualizarConfiguracion,
   obtenerHistorial,
   calcularPreviewPrecio,
   migrarPrecios,
-  recalcularPrecios
+  recalcularPrecios,
+  limpiarEstructuraPrecios
 };
