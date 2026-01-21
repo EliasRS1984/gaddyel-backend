@@ -482,7 +482,7 @@ export const recalcularPrecios = async (req, res) => {
     console.log('\n🔄 Iniciando recalculación masiva de precios...');
     
     // Obtener configuración actual
-    const config = await SystemConfig.obtenerConfiguracion();
+    const config = await SystemConfig.obtenerConfigActual();
     const tasaActual = config.comisiones.mercadoPago.tasaComision;
     
     console.log(`📊 Tasa actual de comisión: ${(tasaActual * 100).toFixed(2)}%`);
