@@ -91,7 +91,14 @@ export const obtenerProductoPorId = async (req, res, next) => {
             colores: prod.colores,
             personalizable: prod.personalizable,
             precio: prod.precio,
-            cantidadUnidades: prod.cantidadUnidades
+            cantidadUnidades: prod.cantidadUnidades,
+            propiedadesPersonalizadas: prod.propiedadesPersonalizadas || {},
+            // ✅ Incluir datos de precios y fechas
+            precioBase: prod.precioBase,
+            tasaComisionAplicada: prod.tasaComisionAplicada,
+            fechaActualizacionPrecio: prod.fechaActualizacionPrecio,
+            createdAt: prod.createdAt,
+            updatedAt: prod.updatedAt
         };
 
         res.json(productoFormateado);
