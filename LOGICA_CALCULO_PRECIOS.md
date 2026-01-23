@@ -221,12 +221,16 @@ Cuando creamos/editamos un producto en el admin con precio base = $95,000:
   nombre: "Producto XYZ",
   
   // Campos de precio
-  precio: 102900,  // ← Lo que paga el cliente
+  precio: 102900,  // ← Lo que paga el cliente (precioVenta)
+  precioBase: 95000,  // ← Nuestro objetivo de ganancia (CAMPO RAÍZ)
+  tasaComisionAplicada: 0.0761,
+  precioCalculadoExacto: 102873.19,  // Antes de redondeo
+  ajusteRedondeo: 26.81,  // Ganancia por redondeo
+  montoComision: 7900,  // Diferencia venta - base
+  fechaActualizacionPrecio: "2026-01-23T10:30:00.000Z",
   
   propiedadesPersonalizadas: {
-    precioBase: 95000,  // ← Nuestro objetivo de ganancia
-    tasaComisionAplicada: 0.0761,
-    fechaActualizacionPrecio: "2026-01-23T10:30:00.000Z"
+    // Otros campos opcionales del negocio
   }
 }
 ```
@@ -290,12 +294,12 @@ systemConfigSchema.methods.calcularPrecioVenta = function(precioBase) {
   </p>
 </div>
 
-{/* Precio Base - Secundario */}
+{/* Precio Base - Secundario (desde campo raíz, NO propiedadesPersonalizadas) */}
 <div>
   <p className="text-xs uppercase text-gray-500 font-bold mb-1">Precio Base</p>
-  {product.propiedadesPersonalizadas?.precioBase ? (
+  {product.precioBase && product.precioBase > 0 ? (
     <p className="text-lg font-bold text-green-700">
-      ${parseFloat(product.propiedadesPersonalizadas.precioBase)
+      ${parseFloat(product.precioBase)
         .toLocaleString('es-AR', { minimumFractionDigits: 2 })}
     </p>
   ) : (
@@ -381,16 +385,17 @@ El **precio base SIEMPRE debe venir del Backend (BD)**, nunca calculado en el fr
 const precioBase = 95000;  // Usuario ingresa
 const precioVenta = config.calcularPrecioVenta(precioBase);
 
-// Se guarda en BD
+// Se guarda en BD (campos SEPARADOS, no dentro de propiedadesPersonalizadas)
 await Producto.updateOne(
   { _id: id },
   {
-    precio: precioVenta.precioVenta,
-    propiedadesPersonalizadas: {
-      precioBase: precioBase,  // ← VERDAD ÚNICA
-      tasaComisionAplicada: 0.0761,
-      fechaActualizacionPrecio: new Date()
-    }
+    precioBase: precioBase,  // ← VERDAD ÚNICA (campo raíz)
+    precio: precioVenta.precioVenta,  // ← Lo que paga cliente
+    tasaComisionAplicada: 0.0761,
+    precioCalculadoExacto: precioVenta.precioExacto,
+    ajusteRedondeo: precioVenta.ajusteRedondeo,
+    montoComision: precioVenta.montoComision,
+    fechaActualizacionPrecio: new Date()
   }
 );
 ```
