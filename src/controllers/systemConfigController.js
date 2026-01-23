@@ -512,16 +512,19 @@ export const recalcularPrecios = async (req, res) => {
 
     for (const producto of productosConPrecioBase) {
       try {
-        // Calcular nuevo precio usando precioBase y tasa actual
-        const precioNuevo = config.calcularPrecioVenta(producto.precioBase);
+        // 🧾 AUDITORÍA: Calcular precio con desglose completo para transparencia contable
+        const breakdown = await config.calcularPrecioVenta(producto.precioBase);
 
-        // Actualizar producto
+        // Actualizar producto con precio y metadatos de auditoría
         const actualizado = await Producto.findByIdAndUpdate(
           producto._id,
           {
             $set: {
-              precio: precioNuevo,
-              tasaComisionAplicada: tasaActual,
+              precio: breakdown.precioVenta,
+              precioCalculadoExacto: breakdown.precioExacto,
+              ajusteRedondeo: breakdown.ajusteRedondeo,
+              montoComision: breakdown.montoComision,
+              tasaComisionAplicada: breakdown.tasaAplicada,
               fechaActualizacionPrecio: new Date()
             }
           },
@@ -536,7 +539,7 @@ export const recalcularPrecios = async (req, res) => {
         }
 
         recalculados++;
-        console.log(`✅ [${recalculados}/${productosConPrecioBase.length}] ${producto.nombre} | Base: $${producto.precioBase} → Venta: $${precioNuevo} (antes: $${producto.precio})`);
+        console.log(`✅ [${recalculados}/${productosConPrecioBase.length}] ${producto.nombre} | Base: $${producto.precioBase} → Venta: $${breakdown.precioVenta} (Exacto: $${breakdown.precioExacto.toFixed(2)}, Ajuste: $${breakdown.ajusteRedondeo.toFixed(2)})`);
 
       } catch (error) {
         errores.push({

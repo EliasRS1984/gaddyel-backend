@@ -60,11 +60,27 @@ const productoSchema = new mongoose.Schema(
       min: 0
     }, // precio = precioBase / (1 - tasaComision)
     
-    // Metadatos de pricing
+    // Metadatos de pricing para auditoría contable
     tasaComisionAplicada: { 
       type: Number, 
       default: 0.0761 
-    }, // Tasa usada en el último cálculo
+    }, // Tasa usada en el último cálculo (ej: 0.0761 = 7.61%)
+    
+    precioCalculadoExacto: {
+      type: Number,
+      default: 0
+    }, // Precio exacto ANTES del redondeo (ej: 119061.42)
+    
+    ajusteRedondeo: {
+      type: Number,
+      default: 0
+    }, // Diferencia por redondeo comercial (ej: 119100 - 119061 = 39)
+    
+    montoComision: {
+      type: Number,
+      default: 0
+    }, // Monto absoluto de comisión (ej: precio - precioBase = 9100)
+    
     fechaActualizacionPrecio: { 
       type: Date, 
       default: Date.now 

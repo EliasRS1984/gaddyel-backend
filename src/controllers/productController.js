@@ -172,6 +172,29 @@ export const crearProducto = async (req, res) => {
             ? imagenes.filter(img => img) 
             : [];
 
+        // ✅ CALCULAR METADATOS DE PRICING PARA AUDITORÍA
+        // Si se proporciona precioBase, calcular con SystemConfig
+        let metadatosPricing = {
+            precioCalculadoExacto: 0,
+            ajusteRedondeo: 0,
+            montoComision: 0
+        };
+
+        if (precioBaseNum > 0) {
+            const SystemConfig = (await import('../models/SystemConfig.js')).default;
+            const config = await SystemConfig.obtenerConfigActual();
+            const calculoPrecio = config.calcularPrecioVenta(precioBaseNum);
+            
+            metadatosPricing = {
+                precioCalculadoExacto: calculoPrecio.precioExacto,
+                ajusteRedondeo: calculoPrecio.ajusteRedondeo,
+                montoComision: calculoPrecio.montoComision
+            };
+            
+            // Actualizar precio con el calculado
+            // (Nota: Si el frontend ya lo calculó, debería coincidir)
+        }
+
         const nuevoProducto = new Producto({
             nombre,
             descripcion,
@@ -185,6 +208,9 @@ export const crearProducto = async (req, res) => {
             precio: precioNumero,
             cantidadUnidades: stock,
             tasaComisionAplicada: tasa,
+            precioCalculadoExacto: metadatosPricing.precioCalculadoExacto,
+            ajusteRedondeo: metadatosPricing.ajusteRedondeo,
+            montoComision: metadatosPricing.montoComision,
             fechaActualizacionPrecio: new Date(),
             destacado: destacado === true || destacado === 'true',
             imagenSrc: imagenSrc || null,
@@ -242,9 +268,40 @@ export const editarProducto = async (req, res) => {
             data.tasaComisionAplicada = tasa;
         }
 
-        // ✅ NUEVO: Actualizar fecha de última actualización de precio
+        // 🧾 AUDITORÍA: Si se actualiza precio o precioBase, calcular metadatos contables
         if (data.precioBase !== undefined || data.precio !== undefined) {
             data.fechaActualizacionPrecio = new Date();
+            
+            // Obtener producto existente para usar valores previos si es necesario
+            const productoExistente = await Producto.findById(req.params.id);
+            if (!productoExistente) {
+                return res.status(404).json({ error: 'Producto no encontrado' });
+            }
+
+            // Usar precioBase del request o del producto existente
+            const precioBaseActual = data.precioBase !== undefined 
+                ? data.precioBase 
+                : productoExistente.precioBase || 0;
+
+            if (precioBaseActual > 0) {
+                // Importar dinámicamente SystemConfig
+                const { default: SystemConfig } = await import('../models/SystemConfig.js');
+                const config = await SystemConfig.obtenerConfigActual();
+                
+                // Calcular pricing con desglose completo
+                const breakdown = await config.calcularPrecioVenta(precioBaseActual);
+                
+                // Guardar precio calculado y metadatos de auditoría
+                data.precio = breakdown.precioVenta;
+                data.precioCalculadoExacto = breakdown.precioExacto;
+                data.ajusteRedondeo = breakdown.ajusteRedondeo;
+                data.montoComision = breakdown.montoComision;
+                
+                // Si no se envió tasaComisionAplicada, usar la que calculó el sistema
+                if (data.tasaComisionAplicada === undefined) {
+                    data.tasaComisionAplicada = breakdown.tasaAplicada;
+                }
+            }
         }
 
         // Validar stock si se envía

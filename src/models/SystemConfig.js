@@ -178,25 +178,47 @@ systemConfigSchema.methods.calcularEnvio = function(cantidadProductos) {
 /**
  * Calcular precio de venta a partir de precio base (con comisión MP)
  * 
- * ⚠️ IMPORTANTE: Redondeo HACIA ARRIBA (ceiling) sin decimales
- * - Asegura que Mercado Pago nunca cobre más de lo calculado
- * - Números enteros evitan problemas de precisión en pasarelas
- * Ejemplo: 1082.36 → 1083
+ * REDONDEO COMERCIAL INTELIGENTE:
+ * 1. Calcula precio exacto con comisión
+ * 2. Redondea a la CENTENA más cercana hacia arriba
+ * 3. Retorna objeto con datos completos para auditoría
+ * 
+ * @returns {Object} {
+ *   precioVenta: number,          // Precio final redondeado
+ *   precioExacto: number,          // Precio antes del redondeo
+ *   ajusteRedondeo: number,        // Diferencia por redondeo
+ *   montoComision: number,         // Comisión total aplicada
+ *   tasaAplicada: number           // Tasa utilizada
+ * }
  */
 systemConfigSchema.methods.calcularPrecioVenta = function(precioBase) {
   const r = this.comisiones.mercadoPago.tasaComision;
   const f = this.comisiones.mercadoPago.comisionFija;
   
   // Fórmula: PrecioVenta = (PrecioBase + f) / (1 - r)
-  const precioVenta = (precioBase + f) / (1 - r);
+  const precioExacto = (precioBase + f) / (1 - r);
   
-  // Redondear HACIA ARRIBA a número entero (sin decimales)
-  return Math.ceil(precioVenta);
+  // REDONDEO COMERCIAL: Hacia arriba a la centena más cercana
+  const precioRedondeado = Math.ceil(precioExacto / 100) * 100;
+  
+  // Calcular metadatos para auditoría contable
+  const ajusteRedondeo = precioRedondeado - precioExacto;
+  const montoComision = precioRedondeado - precioBase;
+  
+  return {
+    precioVenta: precioRedondeado,
+    precioExacto: Math.round(precioExacto * 100) / 100, // 2 decimales
+    ajusteRedondeo: Math.round(ajusteRedondeo * 100) / 100,
+    montoComision: Math.round(montoComision * 100) / 100,
+    tasaAplicada: r
+  };
 };
 
 /**
  * Calcular precio base a partir de precio de venta (reversa)
  * Fórmula inversa: PrecioBase = PrecioVenta * (1 - r) - f
+ * 
+ * Redondea a centena hacia arriba para mantener consistencia
  */
 systemConfigSchema.methods.calcularPrecioBase = function(precioVenta) {
   const r = this.comisiones.mercadoPago.tasaComision;
@@ -205,7 +227,61 @@ systemConfigSchema.methods.calcularPrecioBase = function(precioVenta) {
   // Fórmula inversa: PrecioBase = PrecioVenta * (1 - r) - f
   const precioBase = precioVenta * (1 - r) - f;
   
-  return Math.ceil(precioBase);
+  // Redondeo a centena hacia arriba
+  return Math.ceil(precioBase / 100) * 100;
+};
+
+/**
+ * 🧾 AUDITORÍA: Calcular desglose contable para órdenes
+ * 
+ * ESTRUCTURA DEL DESGLOSE:
+ * 1. precioBasePorItem: Precio base real de items (sin recargo MP)
+ * 2. costoEnvio: Precio de envío (YA incluye recargo MP incorporado)
+ * 3. ajusteRedondeoTotal: Ganancia adicional por redondeo comercial
+ * 4. comisionMercadoPago: Comisión que cobra MP sobre el total
+ * 
+ * NOTA IMPORTANTE:
+ * El precio de envío es un valor general que YA TIENE el recargo de MP incorporado.
+ * Es un precio basado en el costo promedio de envíos, no se calcula individualmente.
+ * 
+ * Fórmula: Total = precioBasePorItem + costoEnvio + ajusteRedondeo
+ * Neto en Caja = Total - comisionMercadoPago
+ * 
+ * @param {Number} totalFinal - Precio total final (lo que paga el cliente)
+ * @param {Array} items - Items con { precioUnitario, cantidad }
+ * @param {Number} costoEnvio - Costo de envío (ya con recargo MP incorporado)
+ * @returns {Object} { precioBasePorItem, comisionMercadoPago, ajusteRedondeoTotal, costoEnvio }
+ */
+systemConfigSchema.methods.calcularDesgloceOrden = function(totalFinal, items, costoEnvio = 0) {
+  const r = this.comisiones.mercadoPago.tasaComision;
+  
+  // 1️⃣ Calcular precio base de items (sin recargo MP)
+  let precioBasePorItem = 0;
+  
+  for (const item of items) {
+    // Cada item tiene precioUnitario con recargo incluido
+    // Calculamos base: precioBase = precioVenta * (1 - tasa)
+    const precioBaseItem = item.precioUnitario * (1 - r);
+    const subtotalBase = precioBaseItem * item.cantidad;
+    precioBasePorItem += subtotalBase;
+  }
+  
+  // Redondear precio base de items
+  precioBasePorItem = Math.round(precioBasePorItem * 100) / 100;
+  
+  // 2️⃣ Comisión MP sobre el TOTAL (incluye items + envío)
+  const comisionMercadoPago = totalFinal * r;
+  
+  // 3️⃣ Ajuste de redondeo = Total - (PrecioBase Items + Envío)
+  // El envío YA tiene el recargo incorporado, así que:
+  const ajusteRedondeoTotal = totalFinal - precioBasePorItem - costoEnvio;
+  
+  return {
+    precioBasePorItem: Math.round(precioBasePorItem * 100) / 100,
+    costoEnvio: Math.round(costoEnvio * 100) / 100,
+    ajusteRedondeoTotal: Math.round(ajusteRedondeoTotal * 100) / 100,
+    comisionMercadoPago: Math.round(comisionMercadoPago * 100) / 100
+  };
 };
 
 const SystemConfig = mongoose.model('SystemConfig', systemConfigSchema);

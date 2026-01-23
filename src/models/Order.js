@@ -179,6 +179,34 @@ const orderSchema = new mongoose.Schema({
         }
     },
 
+    // 🧾 DESGLOSE CONTABLE DETALLADO (2025) - AUDITORÍA DE PRECIOS
+    // 
+    // ESTRUCTURA:
+    // - precioBasePorItem: Precio base real de items (sin recargo MP)
+    // - costoEnvio: Precio de envío (YA incluye recargo MP incorporado)
+    // - ajusteRedondeoTotal: Ganancia adicional por redondeo comercial
+    // - comisionMercadoPago: Comisión que cobra MP sobre el total final
+    //
+    // FÓRMULA: Total = precioBasePorItem + costoEnvio + ajusteRedondeoTotal
+    // NETO: Neto en Caja = Total - comisionMercadoPago
+    desglose: {
+        // Suma de precios base de todos los items (antes de recargos)
+        precioBasePorItem: { type: Number, default: 0, min: 0 },
+        
+        // Costo de envío (YA incluye recargo MP incorporado)
+        // Es un precio general basado en el costo promedio de envíos
+        costoEnvio: { type: Number, default: 0, min: 0 },
+        
+        // Ajuste de redondeo comercial (ganancia adicional)
+        ajusteRedondeoTotal: { type: Number, default: 0, min: 0 },
+        
+        // Comisión de Mercado Pago (7.61% del total final)
+        comisionMercadoPago: { type: Number, default: 0, min: 0 }
+        
+        // ✓ Total = precioBasePorItem + costoEnvio + ajusteRedondeoTotal
+        // ✓ Neto = Total - comisionMercadoPago
+    },
+
     // Ajustes de pago aplicados al total cobrado al cliente (p.ej., recargo por pasarela)
     ajustesPago: {
         pasarela: { type: String, default: 'mercadopago' },

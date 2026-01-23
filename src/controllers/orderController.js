@@ -182,6 +182,25 @@ export const createOrder = async (req, res, next) => {
             }
         });
 
+        // 🧾 AUDITORÍA: Calcular desglose contable 
+        // Incluye: precio base items, envío (con recargo MP incorporado), redondeo, comisión MP
+        const desglose = systemConfig.calcularDesgloceOrden(totalCalculado, productosValidados, costoEnvio);
+        orden.desglose = {
+            precioBasePorItem: desglose.precioBasePorItem,
+            costoEnvio: desglose.costoEnvio,
+            ajusteRedondeoTotal: desglose.ajusteRedondeoTotal,
+            comisionMercadoPago: desglose.comisionMercadoPago
+        };
+
+        console.log('💰 Desglose contable:', {
+            precioBaseItems: desglose.precioBasePorItem,
+            envio: desglose.costoEnvio,
+            redondeo: desglose.ajusteRedondeoTotal,
+            comisionMP: desglose.comisionMercadoPago,
+            total: totalCalculado,
+            netoEnCaja: totalCalculado - desglose.comisionMercadoPago
+        });
+
         await orden.save();
 
         // ✅ Generar número de orden
