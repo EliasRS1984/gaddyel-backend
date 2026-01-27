@@ -36,8 +36,9 @@ export const createOrder = async (req, res, next) => {
         }
 
         // ✅ Validar y normalizar items con protección NoSQL Injection
-        const validatedItems = items.map((item, idx) => {
-            try {
+        let validatedItems;
+        try {
+            validatedItems = items.map((item, idx) => {
                 const productoId = validateObjectId(item.productoId, `items[${idx}].productoId`);
                 const cantidad = Number(item.cantidad);
                 
@@ -46,10 +47,11 @@ export const createOrder = async (req, res, next) => {
                 }
                 
                 return { productoId, cantidad };
-            } catch (error) {
-                throw new Error(`items[${idx}]: ${error.message}`);
-            }
-        });
+            });
+        } catch (error) {
+            console.warn('⚠️ Validación de items fallida:', error.message);
+            return res.status(400).json({ error: error.message });
+        }
 
         console.log('✅ Validación de items pasada');
 

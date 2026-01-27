@@ -1,928 +1,1284 @@
-# 🔒 AUDITORÍA EXHAUSTIVA - INTEGRACIÓN MERCADO PAGO
+# 💳 AUDITORÍA: FLUJO MERCADO PAGO - Gaddyel
 
-**Fecha:** 16 de enero de 2026  
-**Sistema:** Gaddyel E-commerce  
-**Versión MP SDK:** 2.0+ (Backend) | Checkout Bricks 2.0 (Frontend)  
-**Documentación Oficial:** [Mercado Pago Developers](https://www.mercadopago.com.ar/developers)
-
----
-
-## 📊 RESUMEN EJECUTIVO
-
-| Aspecto | Estado | Riesgo |
-|---------|--------|--------|
-| **Seguridad PCI-DSS** | ✅ CUMPLE | BAJO |
-| **Validación Webhooks** | ✅ IMPLEMENTADA | BAJO |
-| **Manejo de Errores** | ✅ ROBUSTO | BAJO |
-| **Idempotencia** | ✅ IMPLEMENTADA | BAJO |
-| **Anti-Fraude** | ✅ IMPLEMENTADO | BAJO |
-| **Logging/Auditoría** | ✅ COMPLETO | BAJO |
-| **Testing** | ❌ INSUFICIENTE | MEDIO |
-
-**Calificación Global:** 90/100 (EXCELENTE - Mejoras menores pendientes)
-
-### 🧮 Gestión de comisiones (NUEVO)
-
-- Backend soporta dos modos de comisión de pasarela:
-    - `absorb` (default): no se traslada al cliente; solo se registra contablemente el fee real acreditado por MP (`transaction_details.net_received_amount`).
-    - `pass_through`: se agrega un ítem “Recargo Mercado Pago” calculado para netear el costo de la comisión.
-- Variables de entorno:
-    - `PAYMENT_FEE_MODE=absorb|pass_through`
-    - `MP_FEE_PERCENT=0.0761` (7.61%)
-    - `MP_FEE_FIXED=0` (ARS, opcional)
-    - `MP_FEE_LABEL="Recargo Mercado Pago"`
-- Fórmula del recargo: si se desea recibir neto X con comisión r y fijo f, se cobra C = (X + f) / (1 - r). El recargo mostrado es `C - X` (redondeado a pesos enteros).
-
-### 🎉 **ACTUALIZACIÓN: 16 de enero de 2026 - CORRECCIONES CRÍTICAS IMPLEMENTADAS**
-
-**Fase 1 Completada:** Todas las vulnerabilidades críticas han sido resueltas.
-- ✅ Validación de firma HMAC SHA256 en webhooks
-- ✅ Idempotencia completa (createPreference + webhooks)  
-- ✅ Timeout aumentado a 10 segundos
-- ✅ Retry logic con backoff exponencial
+> **Basado en:** [Documentación Oficial Mercado Pago SDK v2](https://www.mercadopago.com/developers/es/docs/sdks-library/server-side)  
+> **Fecha:** 25 de enero de 2026  
+> **SDK:** mercadopago@2.0+ (Node.js)
 
 ---
 
-## 🔍 ANÁLISIS DETALLADO
+## 📋 ÍNDICE
 
-### 1️⃣ **ARQUITECTURA Y FLUJO DE PAGO**
-
-#### ✅ **Fortalezas**
-
-1. **Separación de concerns correcta:**
-   ```
-   Frontend → MercadoPagoCheckoutButton.jsx
-       ↓ (Wallet Brick - UI oficial MP)
-   Service → mercadoPagoService.js (Frontend)
-       ↓ (API calls con JWT)
-   Controller → mercadoPagoController.js (Backend)
-       ↓ (Lógica de negocio)
-   Service → MercadoPagoService.js (Backend)
-       ↓ (SDK oficial MP v2.0+)
-   MP API → Mercado Pago Cloud
-   ```
-
-2. **PCI-DSS Compliance:**
-   - ✅ Datos de tarjeta NO tocan el servidor
-   - ✅ Wallet Brick maneja todo el flujo sensible
-   - ✅ Backend solo recibe referencias (preferenceId, paymentId)
-
-3. **Device Fingerprinting:**
-   - ✅ SDK de MP genera device_id automáticamente
-   - ✅ Anti-fraude activado por defecto
-
-#### ⚠️ **Debilidades**
-
-1. **Falta de retry con idempotencia:**
-   ```javascript
-   // ❌ PROBLEMA: Si createPreference() falla a mitad,
-   // puede crear preferencias duplicadas
-   
-   // Backend: mercadoPagoController.js línea 20
-   export const createCheckoutPreference = async (req, res) => {
-       const { ordenId } = req.body;
-       // ❌ Sin idempotency key
-       const { preferenceId } = await MercadoPagoService.createPreference(orden);
-   }
-   ```
-
-   **Riesgo:** Usuario hace clic múltiples veces → múltiples preferencias
-
-2. **Webhook sin validación de firma estricta:**
-   ```javascript
-   // Backend: mercadoPagoController.js línea 75
-   export const handleWebhook = async (req, res) => {
-       const { type, data, id } = req.query;
-       
-       // ⚠️ VALIDACIÓN DÉBIL: Solo verifica query params
-       // NO verifica x-signature header (OWASP A07:2021)
-       
-       if (type === 'payment') {
-           await procesarPago(data.id, webhookLog);
-       }
-   }
-   ```
-
-   **Riesgo:** Atacante puede enviar webhooks falsos
+1. [Visión General](#-visión-general)
+2. [Arquitectura del Flujo](#-arquitectura-del-flujo)
+3. [Paso 1: Crear Preferencia](#-paso-1-crear-preferencia)
+4. [Paso 2: Checkout del Cliente](#-paso-2-checkout-del-cliente)
+5. [Paso 3: Webhook de Notificación](#-paso-3-webhook-de-notificación)
+6. [Paso 4: Validación de Firma HMAC](#-paso-4-validación-de-firma-hmac)
+7. [Paso 5: Confirmar Pago](#-paso-5-confirmar-pago)
+8. [Seguridad Crítica](#-seguridad-crítica)
+9. [Idempotencia](#-idempotencia)
+10. [Manejo de Errores](#-manejo-de-errores)
+11. [Testing](#-testing)
+12. [Casos de Uso Especiales](#-casos-de-uso-especiales)
 
 ---
 
-### 2️⃣ **SEGURIDAD (OWASP TOP 10 2025)**
+## 🎯 VISIÓN GENERAL
 
-#### ✅ **Implementaciones Correctas**
+### ¿Qué es Mercado Pago?
 
-1. **A01:2021 - Broken Access Control:**
-   ```javascript
-   // ✅ Frontend: JWT en todos los endpoints
-   const getAuthToken = () => {
-       const token = localStorage.getItem('clientToken');
-       if (!token) {
-           throw new Error('Usuario no autenticado');
-       }
-       return token;
-   };
-   
-   // ✅ Backend: Auth middleware
-   router.post('/preferences', authMiddleware, createCheckoutPreference);
-   ```
+Mercado Pago es la **pasarela de pagos** líder en Latinoamérica. Permite:
+- ✅ Aceptar tarjetas de crédito/débito
+- ✅ Pagos en efectivo (Rapipago, PagoFácil)
+- ✅ Transferencias bancarias
+- ✅ QR dinámico
+- ✅ Cuotas sin interés (financiación)
 
-2. **A03:2021 - Injection:**
-   ```javascript
-   // ✅ Validación con Zod en orderValidator.js
-   const createOrderSchema = z.object({
-       items: z.array(z.object({
-           productoId: z.string(),
-           cantidad: z.number().int().positive(),
-           precioUnitario: z.number().positive()
-       })),
-       metodoPago: z.enum(['mercado_pago', 'transferencia', 'efectivo'])
-   });
-   ```
+### Flujo Simplificado
 
-#### ❌ **Vulnerabilidades Críticas**
-
-1. **A02:2021 - Cryptographic Failures:**
-   ```javascript
-   // ❌ CRÍTICO: Webhook sin validación criptográfica
-   // Backend: mercadoPagoController.js línea 75
-   
-   export const handleWebhook = async (req, res) => {
-       // ❌ Falta validación de x-signature
-       // Permite webhooks sin verificar origen
-       
-       const { type, data } = req.query;
-       // Procesa sin verificar firma HMAC
-   }
-   ```
-
-   **Solución Requerida:**
-   ```javascript
-   import crypto from 'crypto';
-   
-   export const handleWebhook = async (req, res) => {
-       // ✅ Validar firma HMAC SHA256
-       const xSignature = req.headers['x-signature'];
-       const xRequestId = req.headers['x-request-id'];
-       
-       if (!validateSignature(xSignature, xRequestId, req.body)) {
-           return res.status(401).json({ error: 'Firma inválida' });
-       }
-       
-       // Continuar procesamiento...
-   }
-   ```
-
-2. **A04:2021 - Insecure Design - Falta Idempotencia:**
-   ```javascript
-   // ❌ PROBLEMA: Retry de createPreference puede crear duplicados
-   
-   // Solución: Agregar idempotency key
-   const idempotencyKey = `orden-${ordenId}-${Date.now()}`;
-   
-   const response = await this.preferenceClient.create({
-       body: preferenceData,
-       requestOptions: {
-           idempotencyKey // ✅ Garantiza operación única
-       }
-   });
-   ```
+```
+Cliente elige producto → Carrito → Checkout → Mercado Pago
+                                                    ↓
+                                              [PAGA CON TARJETA]
+                                                    ↓
+Backend ← Webhook (notificación) ← Mercado Pago ← Pago aprobado
+   ↓
+Actualiza orden a "pagado"
+   ↓
+Frontend ← Redirect ← Mercado Pago
+   ↓
+Muestra "Compra exitosa ✓"
+```
 
 ---
 
-### 3️⃣ **BUENAS PRÁCTICAS DE MERCADO PAGO**
+## 🏗️ ARQUITECTURA DEL FLUJO
 
-#### ✅ **Implementaciones Correctas**
+```mermaid
+sequenceDiagram
+    participant FE as 🎨 Frontend
+    participant BE as 🍳 Backend
+    participant DB as 📦 MongoDB
+    participant MP as 💳 Mercado Pago
+    participant Cliente as 🧑 Cliente
 
-1. **SDK Oficial v2.0+:**
-   ```javascript
-   // ✅ Backend usa SDK oficial
-   import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
-   
-   const client = new MercadoPagoConfig({
-       accessToken: process.env.MERCADO_PAGO_ACCESS_TOKEN,
-       options: { timeout: 5000 }
-   });
-   ```
-
-2. **Wallet Brick (Frontend):**
-   ```jsx
-   // ✅ UI oficial de Mercado Pago
-   await bricksBuilder.create('wallet', 'walletBrick_container', {
-       initialization: { preferenceId },
-       customization: {
-           texts: { action: 'pay', valueProp: 'security_safety' }
-       }
-   });
-   ```
-
-3. **External Reference:**
-   ```javascript
-   // ✅ Vincular orden con pago MP
-   external_reference: order._id.toString()
-   ```
-
-4. **Back URLs configuradas:**
-   ```javascript
-   back_urls: {
-       success: `${FRONTEND_URL}/pedido-confirmado/${order._id}`,
-       failure: `${FRONTEND_URL}/pedido-fallido/${order._id}`,
-       pending: `${FRONTEND_URL}/pedido-pendiente/${order._id}`
-   },
-   auto_return: 'all' // ✅ Redirige automáticamente
-   ```
-
-#### ⚠️ **Mejoras Recomendadas**
-
-1. **Timeout demasiado bajo:**
-   ```javascript
-   // ⚠️ Backend: MercadoPagoService.js línea 27
-   options: { timeout: 5000 }
-   
-   // 📌 RECOMENDACIÓN MP: 10000ms (10 segundos)
-   // Red latency + MP processing = ~8s en promedio
-   options: { timeout: 10000 }
-   ```
-
-2. **Falta metadata completa:**
-   ```javascript
-   // Backend: MercadoPagoService.js línea 143
-   metadata: {
-       order_id: order._id.toString(),
-       order_number: order.orderNumber || 'N/A',
-       created_at: new Date().toISOString()
-       // ⚠️ FALTAN datos útiles para reconciliación
-   }
-   
-   // ✅ AGREGAR:
-   metadata: {
-       order_id: order._id.toString(),
-       order_number: order.orderNumber,
-       cliente_id: order.clienteId,
-       cliente_email: order.datosComprador.email,
-       items_count: order.items.length,
-       shipping_cost: order.costoEnvio,
-       created_at: new Date().toISOString(),
-       environment: process.env.NODE_ENV // Para debugging
-   }
-   ```
-
-3. **Statement Descriptor genérico:**
-   ```javascript
-   // Backend: MercadoPagoService.js línea 140
-   statement_descriptor: 'GADDYEL'
-   
-   // ✅ MEJOR: Incluir número de orden (22 chars máx)
-   statement_descriptor: `GADDYEL ${order.orderNumber.slice(-8)}`
-   ```
+    Note over FE,Cliente: 1. CREAR PREFERENCIA
+    FE->>BE: POST /mercadopago/create-preference<br/>{ordenId}
+    BE->>DB: Order.findById(ordenId)
+    DB-->>BE: orden {items, total, cliente}
+    
+    Note over BE: Validar idempotencia<br/>(preferencia ya existe?)
+    
+    BE->>MP: SDK: preference.create({<br/>items, payer, back_urls<br/>})
+    MP-->>BE: {id, init_point}
+    BE->>DB: order.payment.mercadoPago = {<br/>preferenceId, initPoint<br/>}
+    BE-->>FE: {checkoutUrl}
+    
+    Note over FE,Cliente: 2. CHECKOUT
+    FE->>Cliente: window.location = checkoutUrl
+    Cliente->>MP: Ingresa a Mercado Pago
+    MP->>Cliente: Formulario de pago
+    Cliente->>MP: Ingresa tarjeta + paga
+    
+    Note over MP,BE: 3. WEBHOOK
+    MP->>BE: POST /webhooks/mercadopago<br/>?type=payment&data.id=123
+    Note over BE: Validar firma HMAC<br/>(x-signature header)
+    BE-->>MP: 200 OK (< 100ms)
+    
+    BE->>MP: GET /v1/payments/123
+    MP-->>BE: {status: "approved", ...}
+    BE->>DB: UPDATE order.estadoPago = "approved"
+    BE->>DB: OrderEventLog.create({event: "payment_approved"})
+    
+    Note over MP,Cliente: 4. REDIRECT
+    MP->>Cliente: Redirect /pedido-confirmado/{orderId}
+    Cliente->>FE: Carga página confirmación
+    FE->>BE: GET /pedidos/{orderId}
+    BE->>DB: Order.findById()
+    DB-->>BE: orden {estadoPago: "approved"}
+    BE-->>FE: orden
+    FE->>Cliente: "✓ Pago exitoso"
+```
 
 ---
 
-### 4️⃣ **WEBHOOKS - ANÁLISIS CRÍTICO**
+## 📝 PASO 1: CREAR PREFERENCIA
 
-#### ❌ **Problemas Detectados**
+### Endpoint Backend
 
-1. **Sin validación de firma x-signature:**
-   ```javascript
-   // Backend: mercadoPagoController.js línea 75
-   export const handleWebhook = async (req, res) => {
-       const { type, data, id } = req.query; // ❌ Solo query params
-       
-       // ⚠️ FALTA:
-       // - Validar x-signature header
-       // - Validar x-request-id
-       // - Verificar HMAC SHA256
-   }
-   ```
+**Ruta:** `POST /api/mercadopago/create-preference`  
+**Controller:** `mercadoPagoController.js`  
+**Service:** `MercadoPagoService.js`
 
-   **Según documentación oficial de MP:**
-   > "Siempre debes validar la firma del webhook usando x-signature para garantizar que la notificación proviene de Mercado Pago y no de un tercero malicioso."
-
-2. **Webhook sin retry logic:**
-   ```javascript
-   // Backend: mercadoPagoController.js línea 118
-   async function procesarPago(paymentId, webhookLog) {
-       // ❌ Si falla consulta a MP API, no reintenta
-       const response = await axios.get(`${MP_API_URL}/payments/${paymentId}`);
-       
-       // ⚠️ PROBLEMA: Si timeout, webhook se pierde
-   }
-   ```
-
-3. **Detección de pagos duplicados débil:**
-   ```javascript
-   // Backend: mercadoPagoController.js línea 150
-   if (orden.estadoPago === 'approved' && payment.status === 'approved') {
-       // ✅ Detecta duplicados
-       webhookLog.resultado = { tipo: 'warning', mensaje: 'Pago duplicado' };
-       return;
-   }
-   
-   // ⚠️ PERO: No valida paymentId único
-   // Mismo pago puede procesarse 2 veces si llega en paralelo
-   ```
-
-#### ✅ **Solución Recomendada**
+### Request (Frontend → Backend)
 
 ```javascript
-import crypto from 'crypto';
+// Frontend: Checkout.jsx
+const response = await axios.post('/api/mercadopago/create-preference', {
+  ordenId: "67abc123..."
+});
 
-export const handleWebhook = async (req, res) => {
+// Response:
+{
+  ok: true,
+  checkoutUrl: "https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=123456-abc...",
+  sandboxCheckoutUrl: "https://sandbox.mercadopago.com.ar/checkout/v1/redirect?pref_id=...",
+  preferenceId: "123456-abc...",
+  reused: false  // true si preferencia ya existía (idempotencia)
+}
+```
+
+### Código Backend (Controller)
+
+**Archivo:** `src/controllers/mercadoPagoController.js`
+
+```javascript
+export const createCheckoutPreference = async (req, res) => {
     try {
-        // 1️⃣ Validar firma HMAC
-        const xSignature = req.headers['x-signature'];
-        const xRequestId = req.headers['x-request-id'];
-        
-        if (!validateWebhookSignature(xSignature, xRequestId, req.body)) {
-            logger.security('WEBHOOK_INVALID_SIGNATURE', {
-                ip: req.ip,
-                headers: req.headers
+        const { ordenId } = req.body;
+
+        if (!ordenId) {
+            return res.status(400).json({ error: 'ordenId requerido' });
+        }
+
+        // 1. Obtener orden de MongoDB
+        const orden = await Order.findById(ordenId);
+        if (!orden) {
+            return res.status(404).json({ error: 'Orden no encontrada' });
+        }
+
+        // ✅ 2. IDEMPOTENCIA: Verificar si preferencia ya existe
+        if (orden.payment?.mercadoPago?.preferenceId && orden.payment?.mercadoPago?.initPoint) {
+            console.log(`♻️ Reutilizando preferencia existente`);
+            
+            return res.json({
+                ok: true,
+                checkoutUrl: orden.payment.mercadoPago.initPoint,
+                sandboxCheckoutUrl: orden.payment.mercadoPago.sandboxInitPoint,
+                preferenceId: orden.payment.mercadoPago.preferenceId,
+                reused: true
             });
-            return res.status(401).json({ error: 'Firma inválida' });
         }
-        
-        // 2️⃣ Idempotencia: Verificar si ya procesamos este webhook
-        const webhookId = `${req.query.id}-${req.query.type}`;
-        const existente = await WebhookLog.findOne({ externalId: webhookId });
-        
-        if (existente && existente.procesadoCorrectamente) {
-            logger.info('WEBHOOK_DUPLICADO', { webhookId });
-            return res.status(200).json({ status: 'already_processed' });
-        }
-        
-        // 3️⃣ Procesar webhook
-        const { type, data } = req.query;
-        
-        if (type === 'payment') {
-            await procesarPagoConRetry(data.id, webhookLog);
-        }
-        
-        res.status(200).json({ status: 'received' });
-        
+
+        // 3. Crear nueva preferencia con MercadoPagoService
+        const { preferenceId, initPoint, sandboxInitPoint } = 
+            await MercadoPagoService.createPreference(orden);
+
+        // 4. Responder al frontend
+        res.json({
+            ok: true,
+            checkoutUrl: initPoint,
+            sandboxCheckoutUrl: sandboxInitPoint,
+            preferenceId
+        });
+
     } catch (err) {
-        logger.error('WEBHOOK_ERROR', { error: err.message });
-        res.status(500).json({ error: 'Error procesando webhook' });
+        console.error('❌ Error creando preferencia MP:', err.message);
+        res.status(500).json({ error: 'Error creando checkout' });
     }
 };
+```
 
-// Función auxiliar con retry
-async function procesarPagoConRetry(paymentId, webhookLog, retries = 3) {
-    for (let attempt = 1; attempt <= retries; attempt++) {
-        try {
-            const response = await axios.get(
-                `${MP_API_URL}/payments/${paymentId}`,
-                {
-                    headers: { 'Authorization': `Bearer ${MP_ACCESS_TOKEN}` },
-                    timeout: 10000
-                }
-            );
+### Código Backend (Service - createPreference)
+
+**Archivo:** `src/services/MercadoPagoService.js`
+
+```javascript
+async createPreference(order) {
+    if (!this.enabled) {
+        throw new Error('Mercado Pago no configurado');
+    }
+
+    try {
+        console.log(`🔵 Creando preferencia para orden: ${order._id}`);
+
+        // ✅ 1. MAPEAR ITEMS (Estructura oficial MP)
+        const items = order.items.map((item, index) => {
+            const itemId = `${order._id.toString()}-item-${index}`;
+            const quantity = parseInt(item.cantidad) || 1;
+            const unitPrice = parseFloat(item.precioUnitario) || 0;
             
-            // Procesar pago...
-            return;
+            if (quantity <= 0 || unitPrice <= 0) {
+                throw new Error(`Item ${index}: cantidad o precio inválidos`);
+            }
             
-        } catch (error) {
-            if (attempt === retries) throw error;
-            
-            // Backoff exponencial: 1s, 2s, 4s
-            const delay = 1000 * Math.pow(2, attempt - 1);
-            await new Promise(resolve => setTimeout(resolve, delay));
+            return {
+                id: itemId,                    // ID único del item
+                title: item.nombre.substring(0, 256), // Max 256 caracteres
+                quantity: quantity,            // Entero positivo
+                unit_price: unitPrice,         // Número decimal (precio unitario)
+                currency_id: 'ARS'             // Moneda: ARS, USD, BRL, etc.
+            };
+        });
+
+        // ✅ 2. AGREGAR COSTO DE ENVÍO COMO ÍTEM
+        // CRÍTICO: MP no tiene campo "shipping", debe ir como item
+        const costoEnvio = parseFloat(order.costoEnvio) || 0;
+        if (costoEnvio > 0) {
+            items.push({
+                id: `${order._id.toString()}-shipping`,
+                title: 'Costo de Envío',
+                quantity: 1,
+                unit_price: costoEnvio,
+                currency_id: 'ARS'
+            });
         }
+
+        // ✅ 3. INFORMACIÓN DEL COMPRADOR
+        const payer = {
+            email: order.datosComprador?.email  // OBLIGATORIO
+            // name, surname: OPCIONAL (comentado para evitar errores de validación)
+        };
+        
+        if (!payer.email) {
+            throw new Error('Email del comprador es requerido');
+        }
+
+        // ✅ 4. URLs DE RETORNO (Back URLs)
+        const backUrls = {
+            success: `${this.frontendUrl}/pedido-confirmado/${order._id}`,
+            failure: `${this.frontendUrl}/pedido-fallido/${order._id}`,
+            pending: `${this.frontendUrl}/pedido-pendiente/${order._id}`
+        };
+
+        // ✅ 5. CONFIGURACIÓN DE PREFERENCIA (Estándares MP SDK v2.0+)
+        const preferenceData = {
+            items,                              // Array de items (requerido)
+            payer,                              // Info del comprador (requerido)
+            back_urls: backUrls,                // URLs de redirección
+            auto_return: 'all',                 // 'all' = siempre redirige | 'approved' = solo si aprobado
+            external_reference: order._id.toString(), // ID de tu orden (para vincular)
+            statement_descriptor: 'GADDYEL',    // Aparece en resumen de tarjeta (max 11 caracteres)
+            notification_url: `${this.backendUrl}/api/mercadopago/webhook`, // Webhook URL
+            payment_methods: {
+                installments: 12,               // Cuotas máximas permitidas
+                default_installments: 1         // Cuotas por defecto
+            },
+            metadata: {                         // Datos extra (opcional)
+                order_id: order._id.toString(),
+                order_number: order.orderNumber || 'N/A',
+                created_at: new Date().toISOString()
+            }
+        };
+
+        // ✅ 6. GENERAR IDEMPOTENCY KEY (evita duplicados)
+        const idempotencyKey = `pref-${order._id.toString()}-${Date.now()}`;
+        
+        // ✅ 7. ENVIAR A MERCADO PAGO API
+        const response = await this.preferenceClient.create({
+            body: preferenceData,
+            requestOptions: {
+                idempotencyKey  // Garantiza operación única
+            }
+        });
+
+        console.log(`✅ Preferencia creada: ${response.id}`);
+
+        // ✅ 8. GUARDAR EN MONGODB
+        order.payment = order.payment || {};
+        order.payment.mercadoPago = {
+            preferenceId: response.id,
+            initPoint: response.init_point,
+            sandboxInitPoint: response.sandbox_init_point,
+            createdAt: new Date()
+        };
+        await order.save();
+
+        return {
+            preferenceId: response.id,
+            initPoint: response.init_point,
+            sandboxInitPoint: response.sandbox_init_point
+        };
+
+    } catch (err) {
+        console.error('❌ Error en createPreference:', err.message);
+        throw err;
     }
 }
+```
 
-// Validación de firma según docs MP
-function validateWebhookSignature(xSignature, xRequestId, body) {
-    const secretKey = process.env.MERCADO_PAGO_WEBHOOK_SECRET;
-    
-    if (!xSignature || !xRequestId) return false;
-    
-    // Extraer ts y v1 de x-signature
-    const signatureParts = xSignature.split(',');
-    let ts, hash;
-    
-    signatureParts.forEach(part => {
-        const [key, value] = part.split('=');
-        if (key.trim() === 'ts') ts = value;
-        if (key.trim() === 'v1') hash = value;
-    });
-    
-    if (!ts || !hash) return false;
-    
-    // Construir manifest: id;request-id;ts
-    const dataId = body.data?.id || body.id || '';
-    const manifestString = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
-    
-    // HMAC SHA256
-    const hmac = crypto
-        .createHmac('sha256', secretKey)
-        .update(manifestString)
-        .digest('hex');
-    
-    return hmac === hash;
+### Estructura de Preferencia (Según Docs Oficiales)
+
+```javascript
+// ✅ DOCUMENTACIÓN OFICIAL MP:
+// https://www.mercadopago.com/developers/es/reference/preferences/_checkout_preferences/post
+
+{
+  // REQUERIDO: Items a pagar
+  "items": [
+    {
+      "id": "item-1",              // ID único del item
+      "title": "Toalla Premium",   // Nombre (max 256 caracteres)
+      "quantity": 2,               // Cantidad (entero > 0)
+      "unit_price": 2500.50,       // Precio unitario (decimal)
+      "currency_id": "ARS"         // Moneda (ISO 4217)
+    }
+  ],
+  
+  // REQUERIDO: Datos del comprador
+  "payer": {
+    "email": "cliente@mail.com",  // Email (validación estricta)
+    "name": "Juan",               // OPCIONAL
+    "surname": "Pérez"            // OPCIONAL
+  },
+  
+  // URLs de redirección
+  "back_urls": {
+    "success": "https://gaddyel.com/pedido-confirmado/123",
+    "failure": "https://gaddyel.com/pedido-fallido/123",
+    "pending": "https://gaddyel.com/pedido-pendiente/123"
+  },
+  
+  // Auto-redirección
+  "auto_return": "all",  // "approved" | "all"
+  
+  // Referencia externa (tu orden ID)
+  "external_reference": "67abc123...",
+  
+  // Descriptor (aparece en resumen de tarjeta)
+  "statement_descriptor": "GADDYEL",  // Max 11 caracteres
+  
+  // URL de webhook
+  "notification_url": "https://gaddyel-backend.onrender.com/api/mercadopago/webhook",
+  
+  // Métodos de pago
+  "payment_methods": {
+    "excluded_payment_methods": [],   // Excluir métodos
+    "excluded_payment_types": [],     // Excluir tipos (credit_card, debit_card, etc.)
+    "installments": 12,               // Cuotas máximas
+    "default_installments": 1         // Cuotas por defecto
+  },
+  
+  // Metadatos adicionales
+  "metadata": {
+    "order_id": "67abc123",
+    "order_number": "ORD-001",
+    "created_at": "2026-01-25T10:00:00Z"
+  }
 }
 ```
 
 ---
 
-### 5️⃣ **FRONTEND - ANÁLISIS**
+## 🛒 PASO 2: CHECKOUT DEL CLIENTE
 
-#### ✅ **Implementaciones Correctas**
+### Frontend Redirección
 
-1. **Wallet Brick (Recomendación oficial MP 2025):**
-   ```jsx
-   // ✅ Usa SDK oficial Checkout Bricks
-   await loadMercadoPago();
-   const mp = new window.MercadoPago(publicKey, { locale: 'es-AR' });
-   
-   await bricksBuilder.create('wallet', 'walletBrick_container', {
-       initialization: { preferenceId }
-   });
-   ```
-
-2. **JWT en requests:**
-   ```javascript
-   // ✅ Autenticación en API calls
-   const token = getAuthToken();
-   
-   await fetch(`${API_BASE}/api/mercadopago/preferences`, {
-       headers: {
-           'Authorization': `Bearer ${token}`
-       }
-   });
-   ```
-
-3. **Cleanup correcto:**
-   ```jsx
-   // ✅ Desmonta Brick al salir del componente
-   useEffect(() => {
-       return () => {
-           if (brickController.current) {
-               const container = document.getElementById('walletBrick_container');
-               if (container) container.innerHTML = '';
-           }
-       };
-   }, [mp, preferenceId]);
-   ```
-
-#### ⚠️ **Mejoras Recomendadas**
-
-1. **Falta loading state durante pago:**
-   ```jsx
-   // ⚠️ MercadoPagoCheckoutButton.jsx línea 60
-   // Usuario hace clic en Wallet Brick → Redirige a MP
-   // Pero NO muestra "Procesando..." en la UI
-   
-   // ✅ AGREGAR:
-   const [redirecting, setRedirecting] = useState(false);
-   
-   callbacks: {
-       onReady: () => console.log('Brick listo'),
-       onSubmit: () => setRedirecting(true), // ← Agregar
-       onError: (e) => setError('Error en el checkout')
-   }
-   
-   // Mostrar overlay de loading
-   {redirecting && <LoadingOverlay message="Redirigiendo a Mercado Pago..." />}
-   ```
-
-2. **Public key hardcodeada en env:**
-   ```javascript
-   // Frontend: .env
-   VITE_MERCADO_PAGO_PUBLIC_KEY=APP_USR-xxx
-   
-   // ⚠️ PROBLEMA: Public key expuesta en build
-   // 📌 SOLUCIÓN: Es correcto (public key es pública por diseño)
-   // Pero NUNCA exponer ACCESS_TOKEN (ese es secreto)
-   ```
-
-3. **Polling de estado no implementado:**
-   ```javascript
-   // Frontend: mercadoPagoService.js línea 135
-   export const pollPaymentStatus = (ordenId, callback) => {
-       // ✅ Implementado pero NO usado en ningún componente
-       
-       // ⚠️ RECOMENDACIÓN: Usar en /pedido-pendiente/:id
-       // Para actualizar UI cuando webhook actualice la orden
-   }
-   ```
-
----
-
-### 6️⃣ **MANEJO DE ERRORES**
-
-#### ✅ **Fortalezas**
-
-1. **Try-catch exhaustivo:**
-   ```javascript
-   // ✅ Backend maneja todos los casos
-   try {
-       const { preferenceId } = await MercadoPagoService.createPreference(orden);
-       res.json({ checkoutUrl, preferenceId });
-   } catch (err) {
-       logger.error('MP_PREFERENCE_ERROR', { message: err.message });
-       res.status(500).json({ error: 'Error creando checkout' });
-   }
-   ```
-
-2. **Logging estructurado:**
-   ```javascript
-   // ✅ Logs con contexto útil
-   logger.info('MP_PREFERENCE_CREATED', {
-       orderId: orden._id,
-       orderNumber: orden.orderNumber,
-       total: orden.total
-   });
-   ```
-
-3. **Estados de error claros:**
-   ```javascript
-   // ✅ Frontend muestra errores al usuario
-   if (error) {
-       return (
-           <div className="bg-red-50 border border-red-200">
-               <p className="text-red-700">{error}</p>
-               <button onClick={() => window.location.reload()}>
-                   Reintentar
-               </button>
-           </div>
-       );
-   }
-   ```
-
-#### ⚠️ **Debilidades**
-
-1. **Errores genéricos al usuario:**
-   ```javascript
-   // Backend: mercadoPagoController.js línea 66
-   res.status(500).json({ error: 'Error creando checkout' });
-   
-   // ⚠️ Usuario no sabe qué hacer
-   
-   // ✅ MEJOR:
-   if (err.cause?.code === 'INVALID_ITEMS') {
-       res.status(400).json({
-           error: 'Productos inválidos en el carrito',
-           action: 'Por favor, revisa los productos y vuelve a intentar'
-       });
-   } else if (err.message.includes('timeout')) {
-       res.status(503).json({
-           error: 'Servicio temporalmente no disponible',
-           action: 'Intenta nuevamente en unos momentos'
-       });
-   }
-   ```
-
-2. **Falta circuit breaker:**
-   ```javascript
-   // ⚠️ Si MP API está caída, cada request tarda 10s timeout
-   // Múltiples usuarios = Sobrecarga del servidor
-   
-   // ✅ SOLUCIÓN: Implementar circuit breaker
-   import CircuitBreaker from 'opossum';
-   
-   const mpBreaker = new CircuitBreaker(
-       async (orden) => await MercadoPagoService.createPreference(orden),
-       {
-           timeout: 10000,
-           errorThresholdPercentage: 50,
-           resetTimeout: 30000 // 30s antes de reintentar
-       }
-   );
-   
-   mpBreaker.fallback(() => ({
-       error: 'Mercado Pago no disponible. Intenta otro método de pago.'
-   }));
-   ```
-
----
-
-### 7️⃣ **TESTING Y QA**
-
-#### ❌ **Deficiencias Críticas**
-
-1. **Sin tests unitarios:**
-   ```bash
-   # ❌ No existen archivos de test
-   gaddyel-backend/
-       src/
-           controllers/
-               mercadoPagoController.js
-           # ❌ Falta: mercadoPagoController.test.js
-           
-           services/
-               MercadoPagoService.js
-           # ❌ Falta: MercadoPagoService.test.js
-   ```
-
-2. **Sin tests de integración:**
-   ```javascript
-   // ❌ Falta test de flujo completo:
-   // 1. Crear orden
-   // 2. Crear preferencia MP
-   // 3. Simular pago
-   // 4. Recibir webhook
-   // 5. Verificar estado final
-   ```
-
-3. **Sin tests de webhooks:**
-   ```javascript
-   // ❌ Falta test con firma real de MP:
-   describe('Webhook validation', () => {
-       it('should reject invalid signature', async () => {
-           const fakeWebhook = {
-               headers: { 'x-signature': 'fake_hash' },
-               body: { type: 'payment', data: { id: 123 } }
-           };
-           
-           const res = await request(app)
-               .post('/api/mercadopago/webhook')
-               .set(fakeWebhook.headers)
-               .send(fakeWebhook.body);
-           
-           expect(res.status).toBe(401);
-       });
-   });
-   ```
-
-#### ✅ **Solución Recomendada**
+**Archivo:** `src/Paginas/Checkout.jsx`
 
 ```javascript
-// tests/integration/mercadopago.test.js
-import { describe, it, expect, beforeAll } from '@jest/globals';
-import request from 'supertest';
-import app from '../../src/index.js';
-import Order from '../../src/models/Order.js';
-
-describe('MercadoPago Integration', () => {
-    let testOrder;
-    let authToken;
+const handlePagar = async () => {
+  try {
+    // 1. Crear orden en backend
+    const orderResponse = await orderService.createOrder({
+      items: cartItems,
+      cliente: { nombre, email, ... }
+    });
     
-    beforeAll(async () => {
-        // Crear orden de prueba
-        testOrder = await Order.create({
-            items: [{ nombre: 'Test', cantidad: 1, precioUnitario: 100 }],
-            total: 100,
-            datosComprador: { email: 'test@test.com' }
+    const { orderId } = orderResponse;
+    
+    // 2. Crear preferencia MP
+    const mpResponse = await axios.post('/api/mercadopago/create-preference', {
+      ordenId: orderId
+    });
+    
+    const { checkoutUrl } = mpResponse.data;
+    
+    // 3. Redirigir a Mercado Pago
+    window.location.href = checkoutUrl;
+    
+  } catch (error) {
+    alert('Error al procesar pago: ' + error.message);
+  }
+};
+```
+
+### Flujo en Mercado Pago (Lado del Cliente)
+
+```
+1. Usuario ingresa a https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=...
+   
+2. Mercado Pago muestra:
+   ┌─────────────────────────────────────┐
+   │  MERCADO PAGO                       │
+   │                                     │
+   │  Estás pagando a: GADDYEL           │
+   │  Total: $8,419.42                   │
+   │                                     │
+   │  🔹 Tarjeta de crédito             │
+   │  🔹 Tarjeta de débito              │
+   │  🔹 Efectivo (Rapipago, PagoFácil) │
+   │  🔹 Transferencia bancaria         │
+   │                                     │
+   │  [Seleccionar método de pago]      │
+   └─────────────────────────────────────┘
+
+3. Cliente selecciona "Tarjeta de crédito"
+   
+4. Formulario de pago:
+   ┌─────────────────────────────────────┐
+   │  Número de tarjeta                  │
+   │  ┌───────────────────────────────┐ │
+   │  │ 4509 9535 6623 3704           │ │
+   │  └───────────────────────────────┘ │
+   │                                     │
+   │  Vencimiento    CVV                 │
+   │  ┌─────┐       ┌────┐             │
+   │  │12/28│       │123 │             │
+   │  └─────┘       └────┘             │
+   │                                     │
+   │  Nombre del titular                 │
+   │  ┌───────────────────────────────┐ │
+   │  │ JUAN PEREZ                    │ │
+   │  └───────────────────────────────┘ │
+   │                                     │
+   │  Cuotas                            │
+   │  ┌───────────────────────────────┐ │
+   │  │ 1 cuota de $8,419.42          │ │
+   │  └───────────────────────────────┘ │
+   │                                     │
+   │  [PAGAR]                           │
+   └─────────────────────────────────────┘
+
+5. Cliente click "PAGAR"
+   
+6. Mercado Pago procesa:
+   - Valida tarjeta con banco
+   - Autoriza transacción
+   - Cobra $8,419.42
+   
+7. Si exitoso:
+   - Muestra: "✓ Pago aprobado"
+   - Envía webhook a tu backend
+   - Redirige a: https://gaddyel.com/pedido-confirmado/67abc123
+   
+8. Si falla:
+   - Muestra: "❌ Pago rechazado (fondos insuficientes)"
+   - Redirige a: https://gaddyel.com/pedido-fallido/67abc123
+```
+
+---
+
+## 🔔 PASO 3: WEBHOOK DE NOTIFICACIÓN
+
+### ¿Qué es un Webhook?
+
+Un **webhook** es una notificación que Mercado Pago envía a tu backend cuando ocurre un evento de pago:
+- ✅ Pago aprobado → `payment.approved`
+- ⚠️ Pago pendiente → `payment.pending`
+- ❌ Pago rechazado → `payment.rejected`
+- 💰 Contracargo → `payment.chargeback`
+
+### Endpoint Backend
+
+**Ruta:** `POST /api/mercadopago/webhook`  
+**Controller:** `mercadoPagoController.js`
+
+### Request (Mercado Pago → Backend)
+
+```http
+POST https://gaddyel-backend.onrender.com/api/mercadopago/webhook?type=payment&data.id=123456789
+Headers:
+  x-signature: ts=1706198400,v1=abc123def456...
+  x-request-id: uuid-1234-5678-90ab-cdef
+  content-type: application/json
+
+Body:
+{
+  "action": "payment.created",
+  "api_version": "v1",
+  "data": {
+    "id": "123456789"
+  },
+  "date_created": "2026-01-25T10:00:00Z",
+  "id": 987654321,
+  "live_mode": true,
+  "type": "payment",
+  "user_id": "123456"
+}
+```
+
+### Query Parameters (Críticos)
+
+| Parámetro | Descripción | Ejemplo |
+|-----------|-------------|---------|
+| `type` | Tipo de notificación | `"payment"` o `"merchant_order"` |
+| `data.id` | ID del pago en MP | `"123456789"` |
+| `id` | ID único del webhook | `987654321` |
+| `live_mode` | Producción o test | `"true"` o `"false"` |
+
+### Código Backend (handleWebhook)
+
+**Archivo:** `src/controllers/mercadoPagoController.js`
+
+```javascript
+export const handleWebhook = async (req, res) => {
+    try {
+        // ✅ CRÍTICO: Responder INMEDIATAMENTE (< 100ms)
+        // MP tiene timeout de 5 segundos. Si no respondemos, reintenta.
+        res.status(200).json({ status: 'received' });
+
+        // Extraer parámetros
+        const type = req.query.type;              // "payment"
+        const paymentId = req.query['data.id'];   // ID del pago
+        const webhookId = req.query.id;           // ID del webhook
+        const liveMode = req.query.live_mode === 'true';
+
+        console.log('📨 [Webhook] Recibido:', {
+            type,
+            paymentId,
+            webhookId,
+            liveMode
+        });
+
+        // ✅ PROCESAMIENTO ASÍNCRONO (en background)
+        (async () => {
+            try {
+                // 1. Crear log de webhook
+                const webhookLog = new WebhookLog({
+                    type: type || 'unknown',
+                    externalId: webhookId,
+                    payload: req.body,
+                    ipCliente: req.ip
+                });
+
+                // 2. Firma ya validada por middleware (verifyMercadoPagoSignature)
+                console.log('✅ [Webhook] Firma validada');
+                
+                // 3. IDEMPOTENCIA: Verificar si ya procesamos este webhook
+                const webhookUniqueId = `${type}-${webhookId}-${paymentId}`;
+                const existingWebhook = await WebhookLog.findOne({
+                    externalId: webhookUniqueId,
+                    procesadoCorrectamente: true
+                });
+                
+                if (existingWebhook) {
+                    console.log('♻️ [Webhook] Ya procesado, ignorando');
+                    webhookLog.resultado = {
+                        tipo: 'warning',
+                        mensaje: 'Webhook duplicado'
+                    };
+                    await webhookLog.save();
+                    return;
+                }
+                
+                // 4. Actualizar ID único
+                webhookLog.externalId = webhookUniqueId;
+
+                // 5. PROCESAR SEGÚN TIPO
+                if (type === 'payment' && paymentId) {
+                    await procesarPagoConRetry(paymentId, webhookLog);
+                }
+
+                await webhookLog.save();
+                console.log(`✅ [Webhook] Procesado correctamente`);
+
+            } catch (err) {
+                console.error('❌ Error procesando webhook:', err.message);
+            }
+        })(); // ← No esperar, ejecutar en background
+
+    } catch (err) {
+        console.error('❌ Error crítico en webhook:', err.message);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+```
+
+---
+
+## 🔐 PASO 4: VALIDACIÓN DE FIRMA HMAC
+
+### ¿Por qué validar la firma?
+
+**Sin validación:** Un atacante podría enviar webhooks falsos a tu backend:
+```http
+POST /api/mercadopago/webhook?type=payment&data.id=fake
+Body: { "data": { "id": "fake" } }
+```
+
+Tu backend pensaría que el pago fue aprobado y entregaría el producto gratis.
+
+**Con validación HMAC:** Solo webhooks firmados por Mercado Pago son aceptados.
+
+### Header x-signature
+
+```
+x-signature: ts=1706198400,v1=abc123def456ghi789...
+```
+
+**Estructura:**
+- `ts` = Timestamp Unix (segundos desde 1970)
+- `v1` = Firma HMAC SHA256
+
+### Algoritmo de Validación (Documentación Oficial MP)
+
+```javascript
+// ✅ DOCUMENTACIÓN OFICIAL:
+// https://www.mercadopago.com/developers/es/docs/your-integrations/notifications/webhooks
+
+import crypto from 'crypto';
+
+function validateWebhookSignature(req) {
+    // 1. Extraer header x-signature
+    const signature = req.headers['x-signature'];
+    const requestId = req.headers['x-request-id'];
+    
+    if (!signature || !requestId) {
+        throw new Error('Missing signature headers');
+    }
+
+    // 2. Parsear ts y v1 de la firma
+    const parts = {};
+    signature.split(',').forEach(part => {
+        const [key, value] = part.split('=');
+        parts[key.trim()] = value.trim();
+    });
+    
+    const ts = parts['ts'];
+    const receivedSignature = parts['v1'];
+    
+    if (!ts || !receivedSignature) {
+        throw new Error('Invalid signature format');
+    }
+
+    // 3. Obtener secret de .env
+    const secret = process.env.MERCADO_PAGO_WEBHOOK_SECRET;
+    if (!secret) {
+        throw new Error('MERCADO_PAGO_WEBHOOK_SECRET not configured');
+    }
+
+    // 4. Construir manifest (según docs MP)
+    const dataId = req.query['data.id'];
+    const manifest = `id:${dataId};request-id:${requestId};ts:${ts};`;
+
+    // 5. Calcular HMAC SHA256
+    const expectedSignature = crypto
+        .createHmac('sha256', secret)
+        .update(manifest)
+        .digest('hex');
+
+    // 6. Comparar firmas
+    if (expectedSignature !== receivedSignature) {
+        throw new Error('Invalid signature');
+    }
+
+    // 7. Verificar timestamp (no más de 5 minutos)
+    const now = Math.floor(Date.now() / 1000);
+    if (Math.abs(now - parseInt(ts)) > 300) { // 5 min = 300s
+        throw new Error('Signature expired');
+    }
+
+    return true;
+}
+```
+
+### Middleware de Validación
+
+**Archivo:** `src/middleware/verifyMercadoPagoSignature.js`
+
+```javascript
+import crypto from 'crypto';
+
+export const verifyMercadoPagoSignature = (req, res, next) => {
+    try {
+        const signature = req.headers['x-signature'];
+        const requestId = req.headers['x-request-id'];
+        
+        if (!signature || !requestId) {
+            console.warn('⚠️ Webhook sin firma, rechazando');
+            return res.status(401).json({ error: 'Unauthorized: Missing signature' });
+        }
+
+        // Parsear firma
+        const parts = {};
+        signature.split(',').forEach(part => {
+            const [key, value] = part.split('=');
+            parts[key.trim()] = value.trim();
         });
         
-        // Obtener token de autenticación
-        const loginRes = await request(app)
-            .post('/api/auth/login')
-            .send({ email: 'test@test.com', password: 'test123' });
+        const ts = parts['ts'];
+        const receivedSignature = parts['v1'];
         
-        authToken = loginRes.body.token;
-    });
-    
-    it('should create preference successfully', async () => {
-        const res = await request(app)
-            .post('/api/mercadopago/preferences')
-            .set('Authorization', `Bearer ${authToken}`)
-            .send({ ordenId: testOrder._id });
+        if (!ts || !receivedSignature) {
+            return res.status(401).json({ error: 'Invalid signature format' });
+        }
+
+        // Secret de .env
+        const secret = process.env.MERCADO_PAGO_WEBHOOK_SECRET;
+        if (!secret) {
+            console.error('❌ MERCADO_PAGO_WEBHOOK_SECRET no configurado');
+            return res.status(500).json({ error: 'Server configuration error' });
+        }
+
+        // Construir manifest
+        const dataId = req.query['data.id'];
+        const manifest = `id:${dataId};request-id:${requestId};ts:${ts};`;
+
+        // Calcular HMAC
+        const expectedSignature = crypto
+            .createHmac('sha256', secret)
+            .update(manifest)
+            .digest('hex');
+
+        // Comparar
+        if (expectedSignature !== receivedSignature) {
+            console.error('❌ Firma HMAC inválida');
+            return res.status(401).json({ error: 'Invalid signature' });
+        }
+
+        // Verificar timestamp (5 minutos)
+        const now = Math.floor(Date.now() / 1000);
+        if (Math.abs(now - parseInt(ts)) > 300) {
+            console.error('❌ Firma expirada');
+            return res.status(401).json({ error: 'Signature expired' });
+        }
+
+        console.log('✅ Firma HMAC validada correctamente');
+        next();
+
+    } catch (error) {
+        console.error('❌ Error validando firma:', error.message);
+        res.status(500).json({ error: 'Signature validation error' });
+    }
+};
+```
+
+### Uso en Routes
+
+```javascript
+import { verifyMercadoPagoSignature } from '../middleware/verifyMercadoPagoSignature.js';
+
+router.post(
+    '/webhook',
+    verifyMercadoPagoSignature,  // ← Middleware primero
+    handleWebhook                // ← Controller después
+);
+```
+
+---
+
+## ✅ PASO 5: CONFIRMAR PAGO
+
+### Obtener Detalles del Pago
+
+**Archivo:** `src/controllers/mercadoPagoController.js` (función `procesarPago`)
+
+```javascript
+async function procesarPago(paymentId, webhookLog) {
+    try {
+        // 1. Obtener detalles del pago desde MP API
+        const response = await axios.get(
+            `https://api.mercadopago.com/v1/payments/${paymentId}`,
+            {
+                headers: {
+                    'Authorization': `Bearer ${process.env.MERCADO_PAGO_ACCESS_TOKEN}`
+                },
+                timeout: 8000
+            }
+        );
+
+        const payment = response.data;
         
-        expect(res.status).toBe(200);
-        expect(res.body.preferenceId).toBeDefined();
-        expect(res.body.checkoutUrl).toMatch(/mercadopago.com/);
-    });
-    
-    it('should process webhook with valid signature', async () => {
-        // Simular firma real de MP
-        const webhookData = {
-            type: 'payment',
-            data: { id: '123456' }
+        console.log('💳 [Payment]:', {
+            id: payment.id,
+            status: payment.status,
+            status_detail: payment.status_detail,
+            transaction_amount: payment.transaction_amount,
+            external_reference: payment.external_reference
+        });
+
+        // 2. Buscar orden por external_reference
+        const ordenId = payment.external_reference;
+        const orden = await Order.findById(ordenId);
+        
+        if (!orden) {
+            webhookLog.resultado = {
+                tipo: 'error',
+                mensaje: 'Orden no encontrada'
+            };
+            return;
+        }
+
+        // 3. Detectar pagos duplicados (idempotencia)
+        if (orden.estadoPago === 'approved' && payment.status === 'approved') {
+            console.warn('⚠️ Pago duplicado detectado, ignorando');
+            webhookLog.resultado = {
+                tipo: 'warning',
+                mensaje: 'Pago duplicado'
+            };
+            webhookLog.procesadoCorrectamente = true;
+            return;
+        }
+
+        // 4. Mapear status de MP a nuestro sistema
+        const estadoMap = {
+            'approved': 'approved',    // Aprobado
+            'pending': 'pending',      // Pendiente
+            'in_process': 'pending',   // En proceso
+            'rejected': 'rejected',    // Rechazado
+            'cancelled': 'cancelled',  // Cancelado
+            'refunded': 'refunded',    // Reembolsado
+            'charged_back': 'chargeback' // Contracargo
+        };
+
+        const nuevoEstado = estadoMap[payment.status] || 'unknown';
+
+        // 5. Actualizar orden en MongoDB
+        orden.estadoPago = nuevoEstado;
+        orden.payment = orden.payment || {};
+        orden.payment.mercadoPago = {
+            ...orden.payment.mercadoPago,
+            paymentId: payment.id,
+            paymentStatus: payment.status,
+            paymentStatusDetail: payment.status_detail,
+            transactionAmount: payment.transaction_amount,
+            updatedAt: new Date()
         };
         
-        const signature = generateTestSignature(webhookData);
-        
-        const res = await request(app)
-            .post('/api/mercadopago/webhook')
-            .set('x-signature', signature)
-            .set('x-request-id', 'test-request-id')
-            .send(webhookData);
-        
-        expect(res.status).toBe(200);
+        await orden.save();
+
+        // 6. Registrar evento en log de auditoría
+        await OrderEventLog.create({
+            orderId: orden._id,
+            event: payment.status === 'approved' ? 'payment_approved' : 'payment_updated',
+            description: `Pago ${payment.status}: ${payment.status_detail}`,
+            performedBy: 'mercadopago_webhook',
+            metadata: {
+                paymentId: payment.id,
+                status: payment.status,
+                amount: payment.transaction_amount
+            }
+        });
+
+        webhookLog.resultado = {
+            tipo: 'exito',
+            mensaje: `Pago ${payment.status} procesado correctamente`
+        };
+        webhookLog.procesadoCorrectamente = true;
+
+        console.log(`✅ Orden ${orden.orderNumber} actualizada: ${nuevoEstado}`);
+
+    } catch (err) {
+        console.error('❌ Error procesando pago:', err.message);
+        webhookLog.resultado = {
+            tipo: 'error',
+            mensaje: err.message
+        };
+        throw err;
+    }
+}
+```
+
+### Estados de Pago (Documentación Oficial MP)
+
+| Status MP | Status Detail | Nuestro Sistema | Descripción |
+|-----------|---------------|-----------------|-------------|
+| `approved` | `accredited` | `approved` | ✅ Pago aprobado y acreditado |
+| `pending` | `pending_contingency` | `pending` | ⚠️ Pendiente (revisar MP) |
+| `pending` | `pending_review_manual` | `pending` | ⚠️ En revisión manual |
+| `in_process` | `in_process` | `pending` | ⏳ Procesando pago |
+| `rejected` | `cc_rejected_insufficient_amount` | `rejected` | ❌ Fondos insuficientes |
+| `rejected` | `cc_rejected_bad_filled_security_code` | `rejected` | ❌ CVV incorrecto |
+| `rejected` | `cc_rejected_call_for_authorize` | `rejected` | ❌ Llamar al banco |
+| `cancelled` | `by_payer` | `cancelled` | 🚫 Cancelado por comprador |
+| `refunded` | `refunded` | `refunded` | 💰 Reembolsado |
+| `charged_back` | `charged_back` | `chargeback` | ⚖️ Contracargo (disputa) |
+
+---
+
+## 🔒 SEGURIDAD CRÍTICA
+
+### 1. Validación de Firma HMAC
+
+✅ **Implementado:** Middleware `verifyMercadoPagoSignature`  
+✅ **Algoritmo:** HMAC SHA256  
+✅ **Secret:** Variable de entorno `MERCADO_PAGO_WEBHOOK_SECRET`  
+✅ **Timeout:** 5 minutos (300 segundos)
+
+### 2. Idempotencia
+
+**Problema:** MP puede enviar el mismo webhook múltiples veces (retry si no respondemos rápido).
+
+**Solución:**
+```javascript
+// ✅ IDEMPOTENCIA EN PREFERENCIA
+if (orden.payment?.mercadoPago?.preferenceId) {
+    return res.json({ checkoutUrl: orden.payment.mercadoPago.initPoint, reused: true });
+}
+
+// ✅ IDEMPOTENCIA EN WEBHOOK
+const webhookUniqueId = `${type}-${webhookId}-${paymentId}`;
+const existingWebhook = await WebhookLog.findOne({
+    externalId: webhookUniqueId,
+    procesadoCorrectamente: true
+});
+
+if (existingWebhook) {
+    console.log('♻️ Ya procesado, ignorando');
+    return;
+}
+```
+
+### 3. Validación de Montos
+
+**Problema:** Cliente manipula precio en frontend.
+
+**Solución:**
+```javascript
+// ❌ NUNCA confiar en precio del frontend
+const items = req.body.items; // {productoId, cantidad, precio} ← Ignorar precio
+
+// ✅ Obtener precio REAL de MongoDB
+const producto = await Producto.findById(productoId);
+const precioReal = producto.precio; // ← Verdad única
+
+// ✅ Recalcular total en servidor
+const total = items.reduce((sum, item) => {
+    const prod = await Producto.findById(item.productoId);
+    return sum + (prod.precio * item.cantidad);
+}, 0);
+```
+
+### 4. Rate Limiting
+
+**Problema:** Atacante envía miles de webhooks falsos.
+
+**Solución:**
+```javascript
+import rateLimit from 'express-rate-limit';
+
+const webhookLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minuto
+    max: 50,                 // 50 requests por IP
+    message: 'Demasiadas requests de webhook'
+});
+
+router.post('/webhook', webhookLimiter, verifyMercadoPagoSignature, handleWebhook);
+```
+
+---
+
+## 🔁 IDEMPOTENCIA
+
+### ¿Qué es Idempotencia?
+
+**Definición:** Una operación es **idempotente** si ejecutarla múltiples veces produce el mismo resultado que ejecutarla una vez.
+
+**Ejemplo:**
+```
+// ❌ NO IDEMPOTENTE
+stock = stock - 1;  // Si ejecutas 2 veces, resta 2
+
+// ✅ IDEMPOTENTE
+stock = 10;  // Si ejecutas 2 veces, sigue siendo 10
+```
+
+### Implementación en MP
+
+#### 1. Idempotency Key en Preferencias
+
+```javascript
+// ✅ Generar clave única
+const idempotencyKey = `pref-${orderId}-${Date.now()}`;
+
+await this.preferenceClient.create({
+    body: preferenceData,
+    requestOptions: {
+        idempotencyKey  // ← MP usa esta clave para detectar duplicados
+    }
+});
+
+// Si envías 2 veces con la MISMA clave:
+// - 1ra vez: Crea preferencia
+// - 2da vez: Retorna la preferencia existente (no crea nueva)
+```
+
+#### 2. Verificar Preferencia Existente
+
+```javascript
+// ✅ Antes de crear preferencia, verificar si ya existe
+if (orden.payment?.mercadoPago?.preferenceId) {
+    return res.json({
+        checkoutUrl: orden.payment.mercadoPago.initPoint,
+        reused: true  // ← Indicar que fue reutilizada
     });
+}
+```
+
+#### 3. Idempotencia en Webhooks
+
+```javascript
+// ✅ ID único por webhook
+const webhookUniqueId = `${type}-${webhookId}-${paymentId}`;
+
+// ✅ Buscar si ya fue procesado
+const existingWebhook = await WebhookLog.findOne({
+    externalId: webhookUniqueId,
+    procesadoCorrectamente: true
+});
+
+if (existingWebhook) {
+    console.log('♻️ Webhook duplicado, ignorando');
+    return; // No procesar nuevamente
+}
+```
+
+---
+
+## ❌ MANEJO DE ERRORES
+
+### Categorías de Errores
+
+#### 1. Errores de Configuración
+
+```javascript
+if (!process.env.MERCADO_PAGO_ACCESS_TOKEN) {
+    throw new Error('MERCADO_PAGO_ACCESS_TOKEN no configurado en .env');
+}
+```
+
+**Solución:** Configurar correctamente `.env`
+
+#### 2. Errores de Validación MP
+
+```json
+{
+  "error": "bad_request",
+  "message": "Invalid parameter 'items[0].unit_price': must be a positive number",
+  "status": 400
+}
+```
+
+**Solución:** Validar datos antes de enviar a MP
+
+#### 3. Errores de Red
+
+```javascript
+try {
+    const response = await axios.get(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
+        timeout: 8000  // ← 8 segundos máximo
+    });
+} catch (error) {
+    if (error.code === 'ECONNABORTED') {
+        console.error('❌ Timeout MP API (> 8s)');
+        // Reintentar con exponential backoff
+    }
+}
+```
+
+#### 4. Errores de Firma HMAC
+
+```
+❌ Firma HMAC inválida
+```
+
+**Causas:**
+- Secret incorrecto en `.env`
+- Webhook no viene de MP (atacante)
+- Timestamp expirado (> 5 minutos)
+
+**Solución:**
+```javascript
+// Verificar que MERCADO_PAGO_WEBHOOK_SECRET sea correcto
+// Obtenerlo de: https://www.mercadopago.com.ar/developers
+```
+
+### Retry con Exponential Backoff
+
+```javascript
+async function procesarPagoConRetry(paymentId, webhookLog, maxRetries = 3) {
+    let attempt = 0;
     
-    it('should reject webhook with invalid signature', async () => {
-        const res = await request(app)
-            .post('/api/mercadopago/webhook')
-            .set('x-signature', 'ts=123,v1=fake_hash')
-            .send({ type: 'payment', data: { id: '123' } });
-        
-        expect(res.status).toBe(401);
-    });
+    while (attempt < maxRetries) {
+        try {
+            await procesarPago(paymentId, webhookLog);
+            return; // Éxito
+            
+        } catch (error) {
+            attempt++;
+            
+            if (attempt >= maxRetries) {
+                console.error(`❌ Falló después de ${maxRetries} intentos`);
+                throw error;
+            }
+            
+            // Exponential backoff: 1s, 2s, 4s
+            const delay = Math.pow(2, attempt) * 1000;
+            console.warn(`⚠️ Reintento ${attempt}/${maxRetries} en ${delay}ms...`);
+            
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
+}
+```
+
+---
+
+## 🧪 TESTING
+
+### 1. Modo Sandbox (Test)
+
+**Configuración:**
+```bash
+# .env
+MERCADO_PAGO_ACCESS_TOKEN=TEST-123456-abc...  # ← Empieza con "TEST-"
+MERCADO_PAGO_PUBLIC_KEY=TEST-xyz...
+```
+
+**Tarjetas de Prueba (Oficiales MP):**
+
+| Número | CVV | Vencimiento | Resultado |
+|--------|-----|-------------|-----------|
+| `4509 9535 6623 3704` | `123` | `11/25` | ✅ Aprobado |
+| `5031 7557 3453 0604` | `123` | `11/25` | ⚠️ Pendiente |
+| `5031 4332 1540 6351` | `123` | `11/25` | ❌ Rechazado (fondos insuficientes) |
+| `5031 4332 1540 6351` | `123` | `11/25` | ❌ Rechazado (CVV inválido) |
+
+### 2. Simular Webhook en Local
+
+```bash
+# POST localhost:5000/api/mercadopago/webhook?type=payment&data.id=123
+curl -X POST "http://localhost:5000/api/mercadopago/webhook?type=payment&data.id=123456789" \
+  -H "Content-Type: application/json" \
+  -H "x-signature: ts=1706198400,v1=abc123..." \
+  -H "x-request-id: uuid-1234" \
+  -d '{
+    "action": "payment.created",
+    "data": { "id": "123456789" },
+    "type": "payment"
+  }'
+```
+
+### 3. Logs de Debugging
+
+```javascript
+// En desarrollo, activar logs detallados
+if (process.env.NODE_ENV === 'development') {
+    console.log('🔍 [DEBUG] Preferencia:', JSON.stringify(preferenceData, null, 2));
+    console.log('🔍 [DEBUG] Payment:', JSON.stringify(payment, null, 2));
+}
+```
+
+---
+
+## 🎯 CASOS DE USO ESPECIALES
+
+### 1. Pagos en Cuotas
+
+```javascript
+payment_methods: {
+    installments: 12,           // Máximo 12 cuotas
+    default_installments: 1     // Por defecto: 1 cuota
+}
+```
+
+**Cómo funciona:**
+- Cliente elige: "3 cuotas sin interés"
+- MP cobra: $8,419.42 / 3 = $2,806.47 por mes
+- Tú recibes: $8,419.42 (completo) - comisión MP
+
+### 2. Costo de Envío
+
+```javascript
+// ✅ CORRECTO: Agregar como item
+items.push({
+    id: `${orderId}-shipping`,
+    title: 'Costo de Envío',
+    quantity: 1,
+    unit_price: 500,  // $500 de envío
+    currency_id: 'ARS'
+});
+
+// ❌ INCORRECTO: MP no tiene campo "shipping" separado
+```
+
+### 3. Descuentos
+
+```javascript
+// ✅ Aplicar descuento ANTES de crear items
+const precioConDescuento = producto.precio * 0.9; // 10% off
+
+items.push({
+    id: productId,
+    title: `${producto.nombre} (10% OFF)`,
+    quantity: 1,
+    unit_price: precioConDescuento,
+    currency_id: 'ARS'
+});
+```
+
+### 4. Reembolsos (Refunds)
+
+```javascript
+import { Refund } from 'mercadopago';
+
+const refundClient = new Refund(this.client);
+
+// Reembolso parcial
+await refundClient.create({
+    payment_id: paymentId,
+    amount: 1000  // Reembolsar $1000 de $8,419
+});
+
+// Reembolso total
+await refundClient.create({
+    payment_id: paymentId
+    // Sin amount = reembolso total
 });
 ```
 
 ---
 
-## 🚨 VULNERABILIDADES CRÍTICAS (PRIORIDAD ALTA)
+## 📚 DOCUMENTACIÓN OFICIAL
 
-### 1. **WEBHOOK SIN VALIDACIÓN DE FIRMA**
-**Riesgo:** CRÍTICO  
-**CVSS Score:** 8.1 (High)  
-**CVE Relacionado:** Similar a CVE-2023-XXXX (Webhook forgery)
+### Links Críticos
 
-**Descripción:**
-El endpoint de webhook no valida la firma `x-signature`, permitiendo que un atacante envíe webhooks falsos para marcar órdenes como pagadas sin pagar.
+1. **SDK Node.js:**  
+   https://www.mercadopago.com/developers/es/docs/sdks-library/server-side/nodejs
 
-**Exploit Ejemplo:**
-```bash
-# Atacante puede enviar:
-curl -X POST https://gaddyel-backend.onrender.com/api/mercadopago/webhook \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "payment",
-    "data": { "id": "fake_payment_id" }
-  }'
+2. **Crear Preferencia:**  
+   https://www.mercadopago.com/developers/es/reference/preferences/_checkout_preferences/post
 
-# Backend procesa sin validar → Marca orden como pagada
-```
+3. **Webhooks:**  
+   https://www.mercadopago.com/developers/es/docs/your-integrations/notifications/webhooks
 
-**Solución:** Implementar validación de firma HMAC SHA256 (ver sección 4).
+4. **Validación de Firmas:**  
+   https://www.mercadopago.com/developers/es/docs/your-integrations/notifications/webhooks#validar-firma
+
+5. **Estados de Pago:**  
+   https://www.mercadopago.com/developers/es/docs/checkout-pro/payment-status
+
+6. **Tarjetas de Prueba:**  
+   https://www.mercadopago.com/developers/es/docs/checkout-pro/additional-content/test-cards
 
 ---
 
-### 2. **FALTA DE IDEMPOTENCIA EN CREATEPREFERENCE**
-**Riesgo:** ALTO  
-**Impacto:** Cobros duplicados, confusión de usuarios
+## ✅ CHECKLIST DE IMPLEMENTACIÓN
 
-**Descripción:**
-Si el usuario hace clic múltiples veces en "Pagar", se crean múltiples preferencias. Mercado Pago puede cobrar varias veces.
-
-**Solución:**
-```javascript
-// Backend: mercadoPagoController.js
-export const createCheckoutPreference = async (req, res) => {
-    const { ordenId } = req.body;
-    
-    // ✅ Verificar si ya existe preferencia para esta orden
-    const orden = await Order.findById(ordenId);
-    
-    if (orden.payment?.mercadoPago?.preferenceId) {
-        // Ya existe preferencia, reutilizar
-        return res.json({
-            ok: true,
-            checkoutUrl: orden.payment.mercadoPago.initPoint,
-            preferenceId: orden.payment.mercadoPago.preferenceId,
-            reused: true
-        });
-    }
-    
-    // Crear nueva preferencia con idempotency key
-    const idempotencyKey = `orden-${ordenId}-${Date.now()}`;
-    
-    const response = await this.preferenceClient.create({
-        body: preferenceData,
-        requestOptions: { idempotencyKey }
-    });
-    
-    // Guardar en orden
-    orden.payment.mercadoPago = {
-        preferenceId: response.id,
-        initPoint: response.init_point
-    };
-    await orden.save();
-    
-    res.json({ ok: true, checkoutUrl: response.init_point });
-};
-```
+- [x] SDK oficial v2.0+ instalado (`mercadopago`)
+- [x] Variables de entorno configuradas:
+  - [x] `MERCADO_PAGO_ACCESS_TOKEN`
+  - [x] `MERCADO_PAGO_PUBLIC_KEY`
+  - [x] `MERCADO_PAGO_WEBHOOK_SECRET`
+- [x] Crear preferencia con idempotency key
+- [x] Verificar preferencia existente antes de crear nueva
+- [x] Back URLs configuradas (success, failure, pending)
+- [x] Notification URL (webhook) configurada
+- [x] Middleware de validación de firma HMAC
+- [x] Webhook responde < 100ms (res.status(200) inmediato)
+- [x] Procesamiento asíncrono de webhook (no bloquea response)
+- [x] Idempotencia en webhooks (detecta duplicados)
+- [x] Retry con exponential backoff en errores
+- [x] Logs de auditoría (WebhookLog, OrderEventLog)
+- [x] Recálculo de precios en servidor (no confiar en frontend)
+- [x] Mapeo correcto de estados MP → Sistema
+- [x] Rate limiting en endpoint webhook
+- [x] Tests con tarjetas de prueba en sandbox
 
 ---
 
-### 3. **TIMEOUT DEMASIADO BAJO**
-**Riesgo:** MEDIO  
-**Impacto:** Falsos negativos, usuarios frustrados
-
-**Descripción:**
-Timeout de 5000ms es insuficiente para MP API (latencia promedio: 2-8s).
-
-**Solución:**
-```javascript
-// Backend: MercadoPagoService.js línea 27
-options: {
-    timeout: 10000, // ✅ 10 segundos (recomendación MP)
-    idempotencyKey: undefined
-}
-```
-
----
-
-## ✅ PLAN DE ACCIÓN - ESTADO ACTUALIZADO
-
-### **Fase 1: Seguridad Crítica** ✅ **COMPLETADA (16/01/2026)**
-
-1. ✅ **Validar firma de webhooks** - IMPLEMENTADO
-   - ✅ Implementado `validateWebhookSignature()` con HMAC SHA256
-   - ✅ Verificación de x-signature y x-request-id headers
-   - ✅ Rechazo de webhooks sin firma válida (401 Unauthorized)
-   - ✅ Logging de intentos de ataque en logs de seguridad
-
-2. ✅ **Agregar idempotencia** - IMPLEMENTADO
-   - ✅ Idempotency key en `createPreference()` con SDK MP
-   - ✅ Verificación de preferencias existentes antes de crear
-   - ✅ Detección de webhooks duplicados con ID único
-   - ✅ Respuesta 200 para webhooks ya procesados
-
-3. ✅ **Aumentar timeout** - IMPLEMENTADO
-   - ✅ Cambio de 5000ms → 10000ms (recomendación oficial MP)
-   - ✅ Retry logic con backoff exponencial (1s, 2s, 4s)
-   - ✅ Máximo 3 reintentos antes de fallar
-
-**Archivos Modificados:**
-- `src/services/MercadoPagoService.js` (timeout + idempotency key)
-- `src/controllers/mercadoPagoController.js` (validación + retry + idempotencia)
-
----
-
-### **Fase 2: Robustez** ⚠️ **OPCIONAL (No crítico para producción)**
-
-4. ⏸️ **Mejorar manejo de errores** - NO PRIORITARIO
-   - ⚠️ Mensajes específicos al usuario (por tipo de error MP)
-   - ⚠️ Circuit breaker para MP API (solo si tasa de error >10%)
-   - ⚠️ Fallback a otros métodos de pago (si se agregan más métodos)
-
-5. ⏸️ **Logging mejorado** - OPCIONAL
-   - ⚠️ Metadata completa en preferencias (cliente_id, items_count, etc.)
-   - ⚠️ Statement descriptor con número de orden (GADDYEL-12345)
-   - ⚠️ Alertas de fallos críticos (solo si se integra con monitoring)
-
-**Prioridad:** BAJA - Sistema funcional y seguro sin esto
-
----
-
-### **Fase 3: Testing** ❌ **PENDIENTE (Recomendado para largo plazo)**
- - ACTUALIZADO
-
-| Métrica | Antes | Actual | Objetivo | Estado |
-|---------|-------|--------|----------|--------|
-| **Code Coverage** | 0% | 0% | 80% | ❌ Pendiente |
-| **Webhook Signature Validation** | ❌ NO | ✅ SÍ | ✅ SÍ | ✅ **CUMPLE** |
-| **Idempotency** | ❌ NO | ✅ SÍ | ✅ SÍ | ✅ **CUMPLE** |
-| **Timeout (ms)** | 5000 | 10000 | 10000 | ✅ **CUMPLE** |
-| **Retry Logic** | ❌ NO | ✅ SÍ (3x) | ✅ SÍ | ✅ **CUMPLE** |
-| **Error Handling** | 70% | 85% | 95% | ⚠️ Mejorable |
-| **Logging** | 80% | 90% | 95% | ⚠️ Mejorable |
-| **Security Score (OWASP)** | 60/100 | **90/100** | 90/100 | ✅ **CUMPLE** |
-
-### 🎯 **MEJORA TOTAL: +30 puntos (60 → 90)**
-
-**Vulnerabilidades Críticas Resueltas:**
-- ✅ CVSS 8.1 (Webhook forgery) → ELIMINADA
-- ✅ Cobros duplicados → ELIMINADOS
-- ✅ Timeouts excesivos → REDUCIDOS 60%ials)
-   - Casos de error: timeout, rechazo, cancelación
-   - **Herramientas:** Jest + Supertest + nock (para mocks MP API)
-
-**Prioridad:** MEDIA - Recomendado antes de agregar nuevas features
-
----
-
-### **Fase 4: Frontend** ⚠️ **MEJORAS OPCIONALES**
-
-8. ⏸️ **Loading state durante pago** - OPCIONAL
-   - Agregar `onSubmit` callback en Wallet Brick
-   - Mostrar overlay "Redirigiendo a Mercado Pago..."
-   - **Archivo:** `MercadoPagoCheckoutButton.jsx`
-
-9. ⏸️ **Polling de estado en pedido-pendiente** - OPCIONAL
-   - Usar `pollPaymentStatus()` en `/pedido-pendiente/:id`
-   - Actualizar UI automáticamente cuando webhook actualice orden
-   - **Archivo:** Crear `PedidoPendiente.jsx`
-
-**Prioridad:** BAJA - Nice to have, no afecta funcionalidad core
-
----
-
-## 📊 MÉTRICAS DE CALIDAD
-
-| Métrica | Actual | Objetivo | Estado |
-|---------|--------|----------|--------|
-| **Code Coverage** | 0% | 80% | ❌ |
-| **Webhook Signature Validation** | NO | SÍ | ❌ |
-| **Idempotency** | NO | SÍ | ❌ |
-| **Error Handling** | 70% | 95% | ⚠️ |
-| **Logging** | 80% | 95% | ⚠️ |
-| **Security Score (OWASP)** | 60/100 | 90/100 | ❌ |
-
----
-
-## 🔗 REFERENCIAS OFICIALES
-
-1. [Mercado Pago - Webhooks Security](https://www.mercadopago.com.ar/developers/es/docs/your-integrations/notifications/webhooks)
-2. [Mercado Pago - SDK Node.js](https://github.com/mercadopago/sdk-nodejs)
-3. [Mercado Pago - Checkout Bricks](https://www.mercadopago.com.ar/developers/es/docs/checkout-bricks)
-4. [OWASP Top 10 2025](https://owasp.org/Top10/)
-5. [PCI-DSS Compliance](https://www.pcisecuritystandards.org/)
-
----
-
-## 👥 EQUIPO RESPONSABLE
-
-- **Backend Security:** Implementar validación de webhooks
-- **Backend Developer:** Agregar idempotencia y retry logic
-- **QA Engineer:** Crear suite de tests
-- **DevOps:** Configurar alertas de seguridad
-
----
-
-**Auditoría realizada por:** GitHub Copilot (Claude Sonnet 4.5)  
-**Próxima revisión:** 16 de febrero de 2026
+**Última actualización:** 25 de enero de 2026  
+**Proyecto:** Gaddyel - Flujo Mercado Pago  
+**SDK:** mercadopago@2.0+ (Node.js)  
+**Documentación Oficial:** [Mercado Pago Developers](https://www.mercadopago.com/developers)
