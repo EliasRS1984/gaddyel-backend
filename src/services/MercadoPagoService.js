@@ -381,35 +381,44 @@ class MercadoPagoService {
                 };
             }
 
-            // ✅ Mapear estado de MP a estado de orden
+            // ✅ Mapear estado de MP a estado de orden (INGLÉS según schema)
             let nuevoEstadoPago = order.estadoPago;
+            let nuevoEstadoPedido = order.estadoPedido;
             let descripcionEvento = '';
 
             switch (paymentInfo.status) {
                 case 'approved':
-                    nuevoEstadoPago = 'aprobado';
+                    nuevoEstadoPago = 'approved';
                     descripcionEvento = `Pago aprobado - ID: ${paymentId}`;
                     order.fechaPago = order.fechaPago || new Date();
+                    // Si pago aprobado, cambiar estado del pedido a producción
+                    if (order.estadoPedido === 'pendiente') {
+                        nuevoEstadoPedido = 'en_produccion';
+                    }
                     break;
 
                 case 'pending':
                 case 'in_process':
-                    nuevoEstadoPago = 'pendiente';
+                    nuevoEstadoPago = 'pending';
                     descripcionEvento = `Pago pendiente - ID: ${paymentId}`;
                     break;
 
                 case 'rejected':
-                    nuevoEstadoPago = 'rechazado';
+                    nuevoEstadoPago = 'rejected';
+                    nuevoEstadoPedido = 'cancelado'; // ✅ CRÍTICO: Marcar pedido como cancelado si pago rechazado
+                    order.motivoRechazo = paymentInfo.status_detail || 'Rechazado por el sistema de pagos';
                     descripcionEvento = `Pago rechazado - ID: ${paymentId} - Motivo: ${paymentInfo.status_detail}`;
                     break;
 
                 case 'cancelled':
-                    nuevoEstadoPago = 'cancelado';
+                    nuevoEstadoPago = 'cancelled';
+                    nuevoEstadoPedido = 'cancelado'; // ✅ También cancelar el pedido
                     descripcionEvento = `Pago cancelado - ID: ${paymentId}`;
                     break;
 
                 case 'refunded':
-                    nuevoEstadoPago = 'reembolsado';
+                    nuevoEstadoPago = 'refunded';
+                    nuevoEstadoPedido = 'cancelado'; // ✅ Si fue reembolsado, cancelar pedido
                     descripcionEvento = `Pago reembolsado - ID: ${paymentId}`;
                     break;
 
@@ -420,7 +429,12 @@ class MercadoPagoService {
             // Solo actualizar si el estado cambió
             if (order.estadoPago !== nuevoEstadoPago) {
                 order.estadoPago = nuevoEstadoPago;
-                console.log(`   ✅ Estado actualizado: ${order.estadoPago} → ${nuevoEstadoPago}`);
+                console.log(`   ✅ Estado pago actualizado: ${order.estadoPago} → ${nuevoEstadoPago}`);
+            }
+
+            if (order.estadoPedido !== nuevoEstadoPedido) {
+                order.estadoPedido = nuevoEstadoPedido;
+                console.log(`   ✅ Estado pedido actualizado: ${order.estadoPedido} → ${nuevoEstadoPedido}`);
             }
 
             await order.save();
