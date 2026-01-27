@@ -186,7 +186,7 @@ export const createOrder = async (req, res, next) => {
 
         // 🧾 AUDITORÍA: Calcular desglose contable 
         // Incluye: precio base items, envío (con recargo MP incorporado), redondeo, comisión MP
-        const desglose = systemConfig.calcularDesgloceOrden(totalCalculado, productosValidados, costoEnvio);
+        const desglose = systemConfig.calcularDesgloceOrden(totalCalculado, productosValidados, costoEnvioCalculado);
         orden.desglose = {
             precioBasePorItem: desglose.precioBasePorItem,
             costoEnvio: desglose.costoEnvio,
