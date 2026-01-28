@@ -81,14 +81,27 @@ const orderSchema = new mongoose.Schema({
         min: 0
     },
     
-    // Estados de pago (Mercado Pago)
+    // ═══════════════════════════════════════════════════════════════
+    // ESTADOS: SEPARACIÓN ENTRE PAGO Y PRODUCCIÓN
+    // ═══════════════════════════════════════════════════════════════
+    
+    // 💳 ESTADO DE PAGO (Mercado Pago)
+    // Controla: ¿El cliente pagó correctamente?
+    // Valores: pending, approved, rejected, cancelled, expired, refunded
+    // Responsable: Webhook de Mercado Pago actualiza este campo
+    // Uso: Determina si la orden es válida para producción
     estadoPago: {
         type: String,
         enum: ['pending', 'approved', 'rejected', 'cancelled', 'expired', 'refunded'],
         default: 'pending'
     },
     
-    // Estados del pedido (Interno)
+    // 🏭 ESTADO DE PRODUCCIÓN (Interno)
+    // Controla: ¿En qué fase está la producción del pedido?
+    // Valores: pendiente, en_produccion, listo, enviado, entregado, cancelado
+    // Responsable: Admin/Sistema actualiza manualmente según avance de producción
+    // Uso: Seguimiento de fabricación y envío de productos
+    // IMPORTANTE: Solo órdenes con estadoPago='approved' deberían estar en producción
     estadoPedido: {
         type: String,
         enum: ['pendiente', 'en_produccion', 'listo', 'enviado', 'entregado', 'cancelado'],
@@ -257,6 +270,21 @@ const orderSchema = new mongoose.Schema({
         default: Date.now,
         index: true
     },
+    
+    // ═══════════════════════════════════════════════════════════════
+    // TTL: AUTO-ELIMINACIÓN DE ÓRDENES NO PAGADAS
+    // ═══════════════════════════════════════════════════════════════
+    // Si una orden permanece en estadoPago='pending' por más de 2 horas,
+    // MongoDB la elimina automáticamente.
+    // RAZÓN: Evitar acumulación de órdenes abandonadas en la base de datos
+    // NOTA: Solo se eliminan órdenes PENDIENTES. Las aprobadas/rechazadas
+    //       ya fueron procesadas por el webhook.
+    expiresAt: {
+        type: Date,
+        default: () => new Date(Date.now() + 2 * 60 * 60 * 1000), // 2 horas
+        index: { expireAfterSeconds: 0 } // MongoDB TTL index
+    },
+    
     fechaPago: {
         type: Date,
         default: null

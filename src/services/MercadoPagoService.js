@@ -392,7 +392,13 @@ class MercadoPagoService {
                     nuevoEstadoPago = 'approved';
                     descripcionEvento = `Pago aprobado - ID: ${paymentId}`;
                     order.fechaPago = order.fechaPago || new Date();
-                    // Si pago aprobado, cambiar estado del pedido a producción
+                    
+                    // ✅ CRÍTICO: Remover expiración TTL (orden aprobada no debe auto-eliminarse)
+                    order.expiresAt = undefined;
+                    
+                    // 🏭 CAMBIO AUTOMÁTICO A PRODUCCIÓN
+                    // Si pago aprobado Y pedido aún está pendiente → Mover a producción
+                    // SEPARACIÓN: estadoPago='approved' (pago OK) → estadoPedido='en_produccion' (iniciar fabricación)
                     if (order.estadoPedido === 'pendiente') {
                         nuevoEstadoPedido = 'en_produccion';
                     }
@@ -405,16 +411,37 @@ class MercadoPagoService {
                     break;
 
                 case 'rejected':
-                    nuevoEstadoPago = 'rejected';
-                    nuevoEstadoPedido = 'cancelado'; // ✅ CRÍTICO: Marcar pedido como cancelado si pago rechazado
-                    order.motivoRechazo = paymentInfo.status_detail || 'Rechazado por el sistema de pagos';
-                    descripcionEvento = `Pago rechazado - ID: ${paymentId} - Motivo: ${paymentInfo.status_detail}`;
-                    break;
-
                 case 'cancelled':
-                    nuevoEstadoPago = 'cancelled';
-                    nuevoEstadoPedido = 'cancelado'; // ✅ También cancelar el pedido
-                    descripcionEvento = `Pago cancelado - ID: ${paymentId}`;
+                    // 🗑️ ELIMINACIÓN AUTOMÁTICA: No actualizar, directamente ELIMINAR orden
+                    // RAZÓN: Orden rechazada/cancelada no sirve para nada, solo ocupa espacio en BD
+                    // El admin NUNCA debería verlas (no tienen valor operativo)
+                    console.log(`🗑️ Eliminando orden ${orderId} (pago ${paymentInfo.status})`);
+                    
+                    await Order.findByIdAndDelete(orderId);
+                    
+                    // Registrar evento de eliminación
+                    await OrderEventLog.create({
+                        orderId,
+                        evento: 'order_deleted',
+                        estadoAnterior: order.estadoPago,
+                        estadoNuevo: paymentInfo.status,
+                        descripcion: `Orden eliminada automáticamente - Pago ${paymentInfo.status === 'rejected' ? 'rechazado' : 'cancelado'}`,
+                        detalles: {
+                            paymentId,
+                            status: paymentInfo.status,
+                            status_detail: paymentInfo.status_detail,
+                            razon: paymentInfo.status === 'rejected' 
+                                ? paymentInfo.status_detail || 'Rechazado por el sistema de pagos'
+                                : 'Cancelado por el usuario'
+                        },
+                        timestamp: new Date()
+                    });
+                    
+                    return {
+                        success: true,
+                        message: `Orden eliminada (pago ${paymentInfo.status})`,
+                        deleted: true
+                    };
                     break;
 
                 case 'refunded':
