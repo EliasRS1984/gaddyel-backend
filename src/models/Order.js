@@ -272,16 +272,21 @@ const orderSchema = new mongoose.Schema({
     },
     
     // ═══════════════════════════════════════════════════════════════
-    // TTL: AUTO-ELIMINACIÓN DE ÓRDENES NO PAGADAS
+    // TTL: AUTO-ELIMINACIÓN DE ÓRDENES ABANDONADAS
     // ═══════════════════════════════════════════════════════════════
-    // Si una orden permanece en estadoPago='pending' por más de 2 horas,
-    // MongoDB la elimina automáticamente.
-    // RAZÓN: Evitar acumulación de órdenes abandonadas en la base de datos
-    // NOTA: Solo se eliminan órdenes PENDIENTES. Las aprobadas/rechazadas
-    //       ya fueron procesadas por el webhook.
+    // ESTRATEGIA:
+    // - Órdenes SIN webhook: Eliminadas después de 2 horas (usuario abandonó)
+    // - Órdenes CON webhook pendiente: Eliminadas después de 7 días (MP confirmará/rechazará)
+    //
+    // RAZÓN: Algunos métodos de pago tardan días en confirmarse:
+    //   • Transferencia bancaria: 24-72h
+    //   • Efectivo en puntos de pago: 24-96h
+    //   • Débito automático: 48-72h
+    //
+    // El webhook EXTIENDE el TTL cuando se recibe notificación 'pending'
     expiresAt: {
         type: Date,
-        default: () => new Date(Date.now() + 2 * 60 * 60 * 1000), // 2 horas
+        default: () => new Date(Date.now() + 2 * 60 * 60 * 1000), // 2 horas iniciales
         index: { expireAfterSeconds: 0 } // MongoDB TTL index
     },
     

@@ -360,16 +360,44 @@ class MercadoPagoService {
             console.log(`   🔄 Estado actual: ${order.estadoPago}`);
             console.log(`   💳 Estado pago MP: ${paymentInfo.status}`);
 
-            // ✅ Actualizar información del pago
+            // ✅ Actualizar información COMPLETA del pago (para comprobante en admin)
             order.payment = order.payment || {};
             order.payment.mercadoPago = order.payment.mercadoPago || {};
+            
+            // Datos básicos de transacción
             order.payment.mercadoPago.paymentId = paymentId;
             order.payment.mercadoPago.status = paymentInfo.status;
             order.payment.mercadoPago.statusDetail = paymentInfo.status_detail;
+            
+            // Método de pago (para mostrar en admin)
             order.payment.mercadoPago.paymentType = paymentInfo.payment_type_id;
             order.payment.mercadoPago.paymentMethod = paymentInfo.payment_method_id;
+            
+            // Montos y cuotas
             order.payment.mercadoPago.transactionAmount = paymentInfo.transaction_amount;
+            order.payment.mercadoPago.installments = paymentInfo.installments || 1;
+            
+            // Fechas de transacción
             order.payment.mercadoPago.lastUpdate = new Date();
+            if (paymentInfo.date_approved) {
+                order.payment.mercadoPago.approvedAt = new Date(paymentInfo.date_approved);
+            }
+            if (paymentInfo.date_created) {
+                order.payment.mercadoPago.createdAt = new Date(paymentInfo.date_created);
+            }
+            
+            // Información del pagador (email registrado en MP)
+            if (paymentInfo.payer?.email) {
+                order.payment.mercadoPago.payerEmail = paymentInfo.payer.email;
+            }
+            if (paymentInfo.payer?.id) {
+                order.payment.mercadoPago.payerId = paymentInfo.payer.id;
+            }
+            
+            // Código de autorización (importante para verificación)
+            if (paymentInfo.authorization_code) {
+                order.payment.mercadoPago.authorizationCode = paymentInfo.authorization_code;
+            }
 
             // Calcular fee efectivo si la API provee transaction_details
             const netReceived = Number(paymentInfo.transaction_details?.net_received_amount);
@@ -408,6 +436,13 @@ class MercadoPagoService {
                 case 'in_process':
                     nuevoEstadoPago = 'pending';
                     descripcionEvento = `Pago pendiente - ID: ${paymentId}`;
+                    
+                    // ⏰ EXTENDER TTL: Pago pendiente legítimo (transferencia, efectivo, etc.)
+                    // RAZÓN: Usuario SÍ inició el pago, pero MP demora en confirmar (24-72h)
+                    // Si NO extendemos TTL, orden se eliminaría antes de que MP confirme
+                    // SOLUCIÓN: Extender TTL a 7 días (tiempo máximo que MP espera confirmación)
+                    order.expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 días
+                    console.log(`   ⏰ TTL extendido a 7 días (pago pendiente legítimo)`);
                     break;
 
                 case 'rejected':
