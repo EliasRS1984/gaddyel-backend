@@ -22,6 +22,8 @@ router.post('/', async (req, res) => {
     try {
         console.log('\n🔔 [Webhook MP] ===== NUEVA NOTIFICACIÓN =====');
         console.log(`   Timestamp: ${new Date().toISOString()}`);
+        console.log(`   IP: ${req.ip}`);
+        console.log(`   Query Params:`, req.query);
         console.log(`   Headers:`, {
             'x-signature': req.headers['x-signature'] ? '✅ Presente' : '❌ Faltante',
             'x-request-id': req.headers['x-request-id'] ? '✅ Presente' : '❌ Faltante',

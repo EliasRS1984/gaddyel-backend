@@ -82,6 +82,21 @@ const getAllowedOrigins = () => {
     return baseOrigins.concat(productionFrontends);
 };
 
+/**
+ * ⚠️ WEBHOOK DE MERCADO PAGO - PRIMERA RUTA (ANTES DE TODOS LOS MIDDLEWARE)
+ * 
+ * CRÍTICO: El webhook debe estar ANTES de:
+ * - mongoSanitize (bloquea parámetros especiales de MP)
+ * - express.json() (necesita raw body para HMAC)
+ * - Cualquier sanitización
+ * 
+ * ✅ RUTA NUEVA: /api/webhooks/mercadopago
+ * Procesa notificaciones de Mercado Pago y actualiza estadoPago
+ * 
+ * ❌ RUTA VIEJA: /api/mercadopago/webhook - DESCONTINUADA
+ */
+app.use("/api/webhooks", mercadoPagoWebhookRoutes);
+
 const allowedOrigins = getAllowedOrigins();
 
 app.use(cors({
@@ -150,11 +165,14 @@ app.use(express.json({ limit: '10kb' }));
 app.use(mongoSanitize({
     replaceWith: '_',
     onSanitize: ({ req, key }) => {
-        logger.security(`Intento de NoSQL injection bloqueado`, { 
-            ip: req?.ip, 
-            key,
-            path: req?.path 
-        });
+        // ✅ EXCLUIR webhooks de este logging (MP genera muchos intentos)
+        if (!req.path.includes('/api/webhooks')) {
+            logger.security(`Intento de NoSQL injection bloqueado`, { 
+                ip: req?.ip, 
+                key,
+                path: req?.path 
+            });
+        }
     }
 }));
 
@@ -213,7 +231,7 @@ app.use("/api/system-config", systemConfigRoutes);         // Configuración glo
 /* ===== RUTAS PÚBLICAS E-COMMERCE ===== */
 app.use("/api/pedidos", orderRoutes);                      // Crear pedidos (público) + listar (admin)
 app.use("/api/mercadopago", mercadoPagoRoutes);            // Checkout Mercado Pago
-app.use("/api/webhooks", mercadoPagoWebhookRoutes);        // ✅ NUEVO: Webhooks de Mercado Pago (actualiza estados)
+// ✅ NOTA: /api/webhooks ya registrado al inicio (antes de sanitización)
 
 /* ===== MIDDLEWARE GLOBAL DE ERRORES ===== */
 app.use(errorHandler);
