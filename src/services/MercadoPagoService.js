@@ -147,8 +147,9 @@ class MercadoPagoService {
                 external_reference: order._id.toString(),
                 statement_descriptor: 'GADDYEL',
                 // ✅ notification_url: Webhook que MP llama cuando hay eventos de pago
-                // CRÍTICO: Sin esto, no se actualizan los datos de transacción
-                notification_url: `${this.backendUrl}/api/mercadopago/webhook`,
+                // CRÍTICO: Debe usar /api/webhooks/mercadopago (con MercadoPagoService)
+                // ANTES se usaba /api/mercadopago/webhook pero NO actualizaba estados correctamente
+                notification_url: `${this.backendUrl}/api/webhooks/mercadopago`,
                 payment_methods: {
                     installments: 12,
                     default_installments: 1

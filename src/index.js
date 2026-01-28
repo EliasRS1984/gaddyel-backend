@@ -14,6 +14,7 @@ import adminProductosRoutes from "./routes/adminProductosRoutes.js";
 import adminClientesRoutes from "./routes/adminClientesRoutes.js";
 import orderRoutes from "./routes/orderRoutes.js";
 import mercadoPagoRoutes from "./routes/mercadoPagoRoutes.js";
+import mercadoPagoWebhookRoutes from "./routes/mercadoPagoWebhookRoutes.js";
 import clientRoutes from "./routes/clientRoutes.js";
 import clientAuthRoutes from "./routes/clientAuthRoutes.js";
 import carouselRoutes from "./routes/carouselRoutes.js";
@@ -126,12 +127,20 @@ app.use(cors({
  * ⚠️ WEBHOOK DE MERCADO PAGO - ANTES DE MIDDLEWARE GLOBAL
  * Necesita raw body para verificar firma HMAC
  * Debe estar ANTES de express.json() y mongoSanitize
+ * 
+ * ✅ RUTA NUEVA: /api/webhooks/mercadopago (recomendada)
+ * Se registra más abajo junto con las demás rutas
+ * 
+ * ❌ RUTA VIEJA: /api/mercadopago/webhook - DESCONTINUADA
+ * El servicio MercadoPagoService ahora usa /api/webhooks/mercadopago
+ * Esta ruta antigua se deja comentada por retrocompatibilidad
  */
-app.post('/api/mercadopago/webhook', 
-    express.raw({ type: 'application/json' }),
-    verifyMercadoPagoSignature,
-    handleWebhook
-);
+// DESCONTINUADO: Este webhook viejo no actualiza estados correctamente
+// app.post('/api/mercadopago/webhook', 
+//     express.raw({ type: 'application/json' }),
+//     verifyMercadoPagoSignature,
+//     handleWebhook
+// );
 
 // ✅ Parsers (después del webhook)
 app.use(cookieParser());
@@ -203,7 +212,8 @@ app.use("/api/system-config", systemConfigRoutes);         // Configuración glo
 
 /* ===== RUTAS PÚBLICAS E-COMMERCE ===== */
 app.use("/api/pedidos", orderRoutes);                      // Crear pedidos (público) + listar (admin)
-app.use("/api/mercadopago", mercadoPagoRoutes);            // Checkout Mercado Pago + webhooks
+app.use("/api/mercadopago", mercadoPagoRoutes);            // Checkout Mercado Pago
+app.use("/api/webhooks", mercadoPagoWebhookRoutes);        // ✅ NUEVO: Webhooks de Mercado Pago (actualiza estados)
 
 /* ===== MIDDLEWARE GLOBAL DE ERRORES ===== */
 app.use(errorHandler);
