@@ -452,9 +452,8 @@ class MercadoPagoService {
                     // El admin NUNCA debería verlas (no tienen valor operativo)
                     console.log(`🗑️ Eliminando orden ${orderId} (pago ${paymentInfo.status})`);
                     
-                    await Order.findByIdAndDelete(orderId);
-                    
-                    // Registrar evento de eliminación
+                    // ✅ PRIMERO: Guardar información de pago en OrderEventLog (para auditoría)
+                    // aunque la orden será eliminada
                     await OrderEventLog.create({
                         orderId,
                         evento: 'order_deleted',
@@ -465,12 +464,18 @@ class MercadoPagoService {
                             paymentId,
                             status: paymentInfo.status,
                             status_detail: paymentInfo.status_detail,
+                            paymentMethod: paymentInfo.payment_method_id,
+                            paymentType: paymentInfo.payment_type_id,
+                            transactionAmount: paymentInfo.transaction_amount,
                             razon: paymentInfo.status === 'rejected' 
                                 ? paymentInfo.status_detail || 'Rechazado por el sistema de pagos'
                                 : 'Cancelado por el usuario'
                         },
                         timestamp: new Date()
                     });
+                    
+                    // ✅ SEGUNDO: Eliminar la orden
+                    await Order.findByIdAndDelete(orderId);
                     
                     return {
                         success: true,
