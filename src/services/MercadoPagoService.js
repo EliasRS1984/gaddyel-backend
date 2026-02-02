@@ -410,6 +410,50 @@ class MercadoPagoService {
                 };
             }
 
+            // ✅ INFORMACIÓN DE TARJETA (para validación visual del admin)
+            // Guardar en campo legacy detallesPago para compatibilidad
+            order.detallesPago = order.detallesPago || {};
+            
+            if (paymentInfo.card) {
+                // Últimos 4 dígitos de la tarjeta
+                if (paymentInfo.card.last_four_digits) {
+                    order.detallesPago.cardLastFour = paymentInfo.card.last_four_digits;
+                }
+                
+                // Marca de la tarjeta (Visa, Mastercard, etc)
+                if (paymentInfo.card.first_six_digits) {
+                    // Banco emisor de la tarjeta
+                    order.detallesPago.issuerBank = paymentInfo.issuer_id || 'N/A';
+                }
+            }
+            
+            // Cuotas (también guardar en detallesPago legacy)
+            if (paymentInfo.installments) {
+                order.detallesPago.installments = paymentInfo.installments;
+            }
+            
+            // Tipo de pago
+            if (paymentInfo.payment_type_id) {
+                order.detallesPago.paymentType = paymentInfo.payment_type_id;
+            }
+            
+            // Código de autorización (también en legacy)
+            if (paymentInfo.authorization_code) {
+                order.detallesPago.authorizationCode = paymentInfo.authorization_code;
+            }
+            
+            // Marca de la tarjeta (en texto legible)
+            if (paymentInfo.payment_method_id) {
+                order.detallesPago.cardBrand = paymentInfo.payment_method_id; // 'visa', 'master', etc
+            }
+
+            console.log('✅ [Webhook] Información de tarjeta guardada:', {
+                cardLastFour: order.detallesPago.cardLastFour || 'N/A',
+                cardBrand: order.detallesPago.cardBrand || 'N/A',
+                installments: order.detallesPago.installments || 1,
+                issuerBank: order.detallesPago.issuerBank || 'N/A'
+            });
+
             // ✅ Mapear estado de MP a estado de orden (INGLÉS según schema)
             let nuevoEstadoPago = order.estadoPago;
             let nuevoEstadoPedido = order.estadoPedido;
