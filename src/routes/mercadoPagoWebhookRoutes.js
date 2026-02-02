@@ -16,7 +16,7 @@ const router = express.Router();
  * 
  * Documentación: https://www.mercadopago.com.ar/developers/es/docs/your-integrations/notifications/webhooks
  */
-router.post('/', async (req, res) => {
+router.post('/mercadopago', async (req, res) => {
     const startTime = Date.now();
     
     try {
@@ -113,7 +113,7 @@ router.post('/', async (req, res) => {
  * GET /api/webhooks/mercadopago/test
  */
 if (process.env.NODE_ENV !== 'production') {
-    router.get('/test', (req, res) => {
+    router.get('/mercadopago/test', (req, res) => {
         res.json({
             message: 'Webhook de Mercado Pago funcionando',
             environment: process.env.NODE_ENV,
