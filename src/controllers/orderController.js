@@ -284,8 +284,18 @@ export const getOrders = async (req, res, next) => {
         // ✅ Construir filtro dinámico con validación
         const filter = {};
         
+        // 🔒 FILTRO CRÍTICO: Por defecto, EXCLUIR órdenes "pending"
+        // RAZÓN: Órdenes pending son creadas ANTES del pago (checkout)
+        // Si el usuario cancela en MP, el webhook las elimina, pero mientras tanto
+        // el admin las vería como "órdenes reales" cuando no lo son.
+        // SOLO mostrar pending si el admin EXPLÍCITAMENTE lo solicita con ?estadoPago=pending
         if (estadoPago && ['pending', 'approved', 'refunded', 'cancelled'].includes(estadoPago)) {
             filter.estadoPago = estadoPago;
+        } else if (!estadoPago) {
+            // ✅ Por defecto: Solo órdenes con pago CONFIRMADO (aprobado, reembolsado, o cancelado con registro)
+            // Esto excluye automáticamente las órdenes "pending" que el usuario abandonó
+            filter.estadoPago = { $ne: 'pending' };
+            console.log('🔒 Aplicando filtro por defecto: Excluyendo órdenes "pending"');
         }
         
         if (estadoPedido && ['pendiente', 'procesando', 'enviado', 'entregado', 'cancelado'].includes(estadoPedido)) {

@@ -144,8 +144,13 @@ export class OrderService {
         // ✅ Construir filtro dinámico con validación
         const filter = {};
 
+        // 🔒 FILTRO CRÍTICO: Por defecto, EXCLUIR órdenes "pending"
+        // Igual que en getOrders() del controller
         if (estadoPago && ['pending', 'approved', 'refunded', 'cancelled'].includes(estadoPago)) {
             filter.estadoPago = estadoPago;
+        } else if (!estadoPago) {
+            // Por defecto: Solo órdenes con pago CONFIRMADO
+            filter.estadoPago = { $ne: 'pending' };
         }
 
         if (estadoPedido && ['pendiente', 'procesando', 'enviado', 'entregado', 'cancelado'].includes(estadoPedido)) {
