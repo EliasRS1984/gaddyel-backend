@@ -261,11 +261,14 @@ class MercadoPagoService {
      * ✅ VALIDAR FIRMA DEL WEBHOOK (x-signature header)
      * Documentación: https://www.mercadopago.com.ar/developers/es/docs/your-integrations/notifications/webhooks
      * 
+     * IMPORTANTE: El data.id viene de QUERY PARAMS, no del body
+     * Template: id:[data.id_url];request-id:[x-request-id_header];ts:[ts_header];
+     * 
      * @param {Object} headers - Headers del request
-     * @param {Object} body - Body del request
+     * @param {Object} query - Query params del request (req.query)
      * @returns {boolean} true si la firma es válida
      */
-    validateWebhookSignature(headers, body) {
+    validateWebhookSignature(headers, query) {
         try {
             const xSignature = headers['x-signature'];
             const xRequestId = headers['x-request-id'];
@@ -291,11 +294,13 @@ class MercadoPagoService {
                 return false;
             }
 
-            // ✅ Construir string para validar: id;request-id;ts
-            const dataId = body.data?.id || body.id || '';
+            // ✅ CORREGIDO: data.id viene de query params, NO del body
+            // Según documentación MP: "data.id_url" = req.query['data.id']
+            const dataId = query['data.id'] || '';
             const manifestString = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
 
             console.log(`   🔐 Validando firma con manifest: ${manifestString}`);
+            console.log(`   🔐 data.id (query): ${dataId}`);
 
             // ✅ Crear HMAC SHA256
             const hmac = crypto
@@ -305,6 +310,11 @@ class MercadoPagoService {
 
             const isValid = hmac === hash;
             console.log(`   ${isValid ? '✅' : '❌'} Firma ${isValid ? 'válida' : 'inválida'}`);
+            
+            if (!isValid) {
+                console.log(`   Expected: ${hmac.substring(0, 20)}...`);
+                console.log(`   Received: ${hash.substring(0, 20)}...`);
+            }
 
             return isValid;
 

@@ -39,7 +39,8 @@ router.post('/mercadopago', async (req, res) => {
         console.log(`   Body:`, JSON.stringify(req.body, null, 2));
 
         // ✅ PASO 1: Validar firma del webhook
-        const isValidSignature = MercadoPagoService.validateWebhookSignature(req.headers, req.body);
+        // IMPORTANTE: Pasar req.query porque data.id viene de query params según documentación MP
+        const isValidSignature = MercadoPagoService.validateWebhookSignature(req.headers, req.query);
         
         if (!isValidSignature) {
             console.log('   ❌ Firma inválida - Rechazando webhook');
