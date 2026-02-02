@@ -30,14 +30,10 @@ temp/
 uploads/
 
 # ============================================
-# DOCUMENTACIÓN LOCAL (Solo desarrollo)
+# DOCUMENTACIÓN VERSIONADA
 # ============================================
-MAPA_BACKEND.md
-
-# ============================================
-# DOCUMENTACIÓN LOCAL (Solo desarrollo)
-# ============================================
-docs/
+# docs/ → SE VERSIONA (CHANGELOG_LOGIC.md, ADRs)
+# MAPA_BACKEND.md → Movido a docs/
 
 # ============================================
 # ARCHIVOS ARCHIVADOS (Legacy code)

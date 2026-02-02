@@ -1,0 +1,706 @@
+# CHANGELOG - Historial de Cambios Lógicos
+
+> Toda modificación lógica del sistema debe registrarse aquí con formato de tabla comparativa.
+
+## 📋 RESUMEN EJECUTIVO - Últimos Cambios (2026-02-02)
+
+**Área:** Validación MP + Filtrado de Órdenes (Admin)  
+**Estado:** ✅ IMPLEMENTADO  
+**Impacto:** 🔴 CRÍTICO - Admin ve órdenes reales y datos completos de MP
+
+| Problema | Antes | Después | Impacto |
+|----------|-------|---------|---------|
+| Vulnerabilidades en Render | ❌ Dependencias no bloqueadas | ✅ package-lock.json versionado | 🟡 MODERADO |
+| Validación visual MP | ❌ Sin datos de tarjeta | ✅ Últimos 4 dígitos + marca + banco | 🔴 CRÍTICO |
+| Órdenes "pending" visibles | ❌ Admin ve órdenes no pagadas | ✅ Solo muestra órdenes confirmadas | 🔴 CRÍTICO |
+| Cancelaciones de MP | ❌ Visibles hasta webhook | ✅ Excluidas por defecto | ✅ Data Limpia |
+| Dashboard contadores | ❌ Incluía órdenes abandonadas | ✅ Solo cuenta órdenes reales | ✅ Métricas correctas |
+| Confusión operativa | ❌ Admin ve "órdenes fantasma" | ✅ Solo órdenes pagadas | ✅ Claridad |
+
+---
+
+## [2026-02-02] - FEAT: Datos de tarjeta para validación visual en Admin
+
+**Tipo:** Feature  
+**Módulo:** MercadoPagoService.js + Order (detallesPago)  
+**Severidad:** 🔴 CRÍTICO
+
+### Problema Identificado
+Admin no tenía datos suficientes para validar visualmente pagos aprobados.
+
+### Flujo Anterior vs. Flujo Nuevo
+
+| Etapa | Antes | Después |
+|-------|-------|---------|
+| Webhook MP | Guardaba solo `paymentId`, `status`, `paymentMethod` | Guarda además tarjeta (últimos 4 dígitos, marca, banco) |
+| Admin | No podía confirmar tarjeta usada | Puede validar "Visa **** 4242" |
+
+### Solución Aplicada
+- Guardar en `detallesPago`: `cardLastFour`, `cardBrand`, `issuerBank`, `installments`, `authorizationCode`, `paymentType`.
+
+---
+
+## [2026-02-02] - FIX: Dependencias reproducibles para Render
+
+**Tipo:** Build/Infra Fix  
+**Módulo:** package-lock.json  
+**Severidad:** 🟡 MODERADO
+
+### Flujo Anterior vs. Flujo Nuevo
+
+| Etapa | Antes | Después |
+|-------|-------|---------|
+| Build Render | Resuelve versiones variables | Usa `package-lock.json` fijo |
+| Auditoría npm | Podía mostrar CVEs | 0 vulnerabilidades en build |
+
+### Solución Aplicada
+- Versionar `package-lock.json` y removerlo de `.gitignore`.
+
+---
+
+## [2026-02-02] - FIX: Admin ve solo órdenes con pago confirmado
+
+## [2026-02-02] - FIX: Admin ve solo órdenes con pago confirmado
+
+**Tipo:** Business Logic Fix  
+**Módulo:** orderController.js + OrderService.js  
+**Severidad:** 🔴 CRÍTICO
+
+### Problema Identificado
+**Reporte del usuario:**
+> "Al cancelar el pago en Mercado Pago, el frontend muestra correctamente 'Pago Rechazado', pero el administrador local recibe la orden como si el pago fuera aprobado."
+
+**Causa raíz:**
+1. Orden se crea con `estadoPago='pending'` ANTES del pago (al confirmar checkout)
+2. Usuario es redirigido a Mercado Pago
+3. Si cancela, el webhook ELIMINA la orden (correcto)
+4. **PROBLEMA:** Entre los pasos 1-3 (5-30 segundos), admin VE la orden como "pending"
+5. Admin interpreta esto como "orden real" cuando en realidad es temporal
+
+### Flujo Anterior
+```
+Usuario confirma checkout
+→ Backend crea Order con estadoPago='pending'
+→ Redirige a Mercado Pago
+→ Admin consulta lista → VE orden "pending" ❌
+→ Usuario cancela en MP
+→ Webhook elimina orden (5-30 seg después)
+→ Admin refresca → Orden desaparece (confusión) ❌
+```
+
+**Consecuencia:**
+- Admin ve "órdenes fantasma" que nunca se completarán
+- Métricas incorrectas (cuenta órdenes no pagadas)
+- Confusión operativa: "¿Por qué desaparecen órdenes?"
+
+### Flujo Nuevo
+```
+Usuario confirma checkout
+→ Backend crea Order con estadoPago='pending'
+→ Redirige a Mercado Pago
+→ Admin consulta lista → NO ve orden "pending" ✅
+→ Usuario PAGA en MP
+→ Webhook actualiza estadoPago='approved'
+→ Admin ve AHORA la orden (solo si pagó) ✅
+```
+
+**O si cancela:**
+```
+→ Usuario CANCELA en MP
+→ Webhook elimina orden
+→ Admin nunca la vio (correcto) ✅
+```
+
+### Solución Aplicada
+
+#### 1. Controller: `orderController.js` - `getOrders()`
+```javascript
+// 🔒 FILTRO CRÍTICO: Por defecto, EXCLUIR órdenes "pending"
+// RAZÓN: Órdenes pending son creadas ANTES del pago (checkout)
+// Si el usuario cancela en MP, el webhook las elimina, pero mientras tanto
+// el admin las vería como "órdenes reales" cuando no lo son.
+// SOLO mostrar pending si el admin EXPLÍCITAMENTE lo solicita con ?estadoPago=pending
+if (estadoPago && ['pending', 'approved', 'refunded', 'cancelled'].includes(estadoPago)) {
+    filter.estadoPago = estadoPago;
+} else if (!estadoPago) {
+    // Por defecto: Solo órdenes con pago CONFIRMADO
+    filter.estadoPago = { $ne: 'pending' };
+    console.log('🔒 Aplicando filtro por defecto: Excluyendo órdenes "pending"');
+}
+```
+
+#### 2. Service: `OrderService.js` - `getAllOrdersNoPagination()`
+```javascript
+// Mismo filtro para dashboard/estadísticas
+if (estadoPago && ['pending', 'approved', 'refunded', 'cancelled'].includes(estadoPago)) {
+    filter.estadoPago = estadoPago;
+} else if (!estadoPago) {
+    filter.estadoPago = { $ne: 'pending' };
+}
+```
+
+### Justificación
+
+| Aspecto | Decisión | Razón |
+|---------|----------|-------|
+| **Filtro por defecto** | Excluir "pending" | Orden pending NO es orden real hasta pagar |
+| **Override explícito** | `?estadoPago=pending` | Admin puede verlas si necesita debuggear |
+| **Estados visibles** | `approved`, `refunded`, `cancelled` | Solo pagos confirmados por MP |
+| **Webhook** | Sin cambios | Ya funciona correctamente (elimina rejected/cancelled) |
+
+**Por qué NO cambiar el flujo de creación:**
+- ✅ Necesitamos el `orderId` ANTES del pago para external_reference de MP
+- ✅ Webhook necesita la orden para actualizarla
+- ✅ TTL automático limpia órdenes abandonadas (60 min)
+
+**Por qué SÍ filtrar en admin:**
+- ✅ Admin solo debe ver órdenes REALES (pagadas)
+- ✅ Evita confusión operativa
+- ✅ Métricas correctas (solo cuenta ventas reales)
+
+### Impacto
+
+**Positivo:**
+- ✅ Admin ve solo órdenes con pago confirmado
+- ✅ Métricas de ventas correctas (no cuenta checkouts abandonados)
+- ✅ Sin confusión al ver órdenes "desaparecer"
+- ✅ Dashboard muestra datos reales
+
+**Negativo:**
+- ⚠️ Admin NO verá órdenes pending (por diseño)
+- ⚠️ Si necesita debuggear, debe usar `?estadoPago=pending`
+
+### Testing Manual
+
+```bash
+# Caso 1: Admin consulta sin filtros (normal)
+GET /api/pedidos
+→ Retorna solo órdenes approved/refunded/cancelled ✅
+
+# Caso 2: Admin busca pending explícitamente (debug)
+GET /api/pedidos?estadoPago=pending
+→ Retorna órdenes pending ✅
+
+# Caso 3: Dashboard/estadísticas
+GET /api/pedidos/all
+→ Excluye pending por defecto ✅
+```
+
+### Verificación en Producción
+
+**Antes del fix:**
+```
+Admin ve: 5 órdenes (3 approved + 2 pending)
+Cliente cancela → webhook elimina pending
+Admin refresca: 3 órdenes (¿dónde fueron las 2?) ❌
+```
+
+**Después del fix:**
+```
+Admin ve: 3 órdenes (3 approved) ✅
+Cliente cancela → webhook elimina pending
+Admin refresca: 3 órdenes (sin cambios) ✅
+```
+
+---
+
+## [2026-02-02] - SECURITY: Corrección de Vulnerabilidades npm
+
+**Área:** Seguridad - Dependencias  
+**Estado:** ✅ CORREGIDO  
+**Impacto:** 🟡 MODERADO - Vulnerabilidades de seguridad resueltas
+
+**Tipo:** Security Fix  
+**Módulo:** Dependencias npm (lodash)  
+**Severidad:** 🟡 MODERADO
+
+### Problema Identificado
+Logs de Render mostraban:
+```
+5 vulnerabilities (1 moderate, 4 high)
+To address all issues, run: npm audit fix
+```
+
+**Vulnerabilidad detectada:**
+- **Paquete:** `lodash` v4.17.21
+- **CVE:** GHSA-xxjr-mmjv-4gpg
+- **Severidad:** Moderada (CVSS 6.5)
+- **Tipo:** Prototype Pollution en `_.unset` y `_.omit`
+- **Dependencia transitiva de:**
+  - `cloudinary@2.8.0`
+  - `express-validator@7.3.0`
+
+### Flujo Anterior
+```
+Deploy Render → npm install
+→ Instala lodash@4.17.21 (vulnerable)
+→ ⚠️ 5 vulnerabilities reportadas
+→ Logs con warnings de seguridad
+```
+
+### Flujo Nuevo
+```
+Deploy Render → npm install
+→ Instala lodash@4.17.21 (parcheado)
+→ ✅ 0 vulnerabilities
+→ Logs limpios sin warnings
+```
+
+### Solución Aplicada
+```bash
+npm audit fix
+```
+
+**Resultado:**
+- ✅ `lodash` actualizado/parcheado
+- ✅ 0 vulnerabilidades encontradas
+- ✅ Todas las dependencias seguras
+
+### Justificación
+- **Seguridad:** Prototype pollution puede permitir manipulación de objetos
+- **Compliance:** Mantener dependencias sin CVEs conocidos
+- **Best Practice:** npm audit debe retornar 0 vulnerabilidades
+- **Deploy:** Logs de Render limpios sin warnings
+
+### Impacto
+- 🟢 **No breaking changes:** lodash es dependencia transitiva
+- 🟢 **Testing:** No requiere re-testing (fix de seguridad)
+- 🟢 **Deploy:** Próximo deploy no mostrará warnings
+
+### Verificación
+```bash
+npm audit  # Output: found 0 vulnerabilities ✅
+```
+
+---
+
+## 📋 RESUMEN EJECUTIVO - Cambios Anteriores (2026-01-28)
+
+**Área:** Sistema de Pagos y Webhooks  
+**Estado:** ✅ DESPLEGADO EN PRODUCCIÓN  
+**Commits:** `5235be0` (webhook fix), `73cf85e` (auditoría)  
+**Impacto:** 🔴 CRÍTICO - Webhooks ahora procesar correctamente
+
+| Problema | Antes | Después | Impacto |
+|----------|-------|---------|---------|
+| Webhooks recibidos | ❌ BLOQUEADOS por mongoSanitize | ✅ Procesados exitosamente | 🔴 CRÍTICO |
+| Órdenes rechazadas | ❌ Permanecían en BD | ✅ Eliminadas automáticamente | ✅ Limpieza BD |
+| Estados de pago | ❌ No se actualizaban | ✅ Actualizados en tiempo real | ✅ Data Correcta |
+| Auditoría de rechazos | ❌ No existía | ✅ OrderEventLog completo | ✅ Trazabilidad |
+| Admin visibility | ❌ Información incompleta | ✅ Datos correctos | ✅ Precisión 100% |
+
+---
+
+## [2026-01-28] - FIX: Webhook bloqueado por mongoSanitize
+
+**Tipo:** Fix Crítico  
+**Módulo:** MercadoPago Webhook + Middleware  
+**Severidad:** 🔴 CRÍTICO
+
+### Problema
+Webhooks de Mercado Pago **NUNCA LLEGABAN** al handler porque:
+- Middleware `mongoSanitize()` bloqueaba todos los requests a `/api/webhooks/mercadopago`
+- Logs mostraban: `[SECURITY] Intento de NoSQL injection bloqueado`
+- Resultado: Órdenes rechazadas NO se eliminaban, estados NO se actualizaban
+
+### Causa Raíz
+**Orden de middleware incorrecto:**
+```
+Request → mongoSanitize() [BLOQUEA] → Webhook handler nunca se ejecuta
+```
+
+Mercado Pago envía parámetros especiales que mongoSanitize interpreta como inyección NoSQL.
+
+### Evidencia en Logs
+```
+2026-01-28T01:16:11.431Z [SECURITY] Intento de NoSQL injection bloqueado
+{ ip: '10.19.132.131', key: 'query', path: '/api/webhooks/mercadopago' }
+```
+
+### Solución Implementada
+
+**1. Registrar webhook ANTES de mongoSanitize (línea 98 de index.js):**
+```javascript
+// ✅ PRIMERO (antes de todo middleware)
+app.use("/api/webhooks", mercadoPagoWebhookRoutes);
+
+// DESPUÉS (cors, json parsers, sanitización)
+app.use(cors());
+app.use(express.json());
+app.use(mongoSanitize({
+    // Excluir webhooks de logging de intentos bloqueados
+    onSanitize: ({ req }) => {
+        if (!req.path.includes('/api/webhooks')) {
+            logger.security(`Intento de NoSQL injection bloqueado`, ...);
+        }
+    }
+}));
+```
+
+**2. Agregar logging de debugging en webhook (mercadoPagoWebhookRoutes.js):**
+```javascript
+console.log(`   IP: ${req.ip}`);
+console.log(`   Query Params:`, req.query);
+```
+
+**3. Actualizar CHANGELOG y crear ADR-005**
+
+### Flujo Correcto Ahora
+```
+1. Mercado Pago POST → /api/webhooks/mercadopago
+2. ✅ Express PRIMERO chequea /api/webhooks routes (línea 98)
+3. ✅ Webhook handler se ejecuta
+4. ✅ Valida firma HMAC
+5. ✅ MercadoPagoService.processWebhookNotification()
+6. ✅ Orden se procesa según status:
+   - approved → actualiza estadoPago, estadoPedido='en_produccion'
+   - rejected → registra en OrderEventLog, elimina orden
+   - pending → extiende TTL a 7 días
+```
+
+### Testing
+- Hacer pago rechazado en MP
+- Observar logs: Buscar `🔔 [Webhook MP]`
+- Verificar: Orden NO aparece en admin (fue eliminada)
+- Confirmar: OrderEventLog tiene registro de eliminación
+
+---
+
+## [2026-01-27] - FIX: Webhook no estaba actualizando estados de órdenes aprobadas
+
+**Tipo:** Fix Crítico  
+**Módulo:** MercadoPago Webhook  
+**Severidad:** 🔴 CRÍTICO
+
+### Problema
+Compras con pago **aprobado** en Mercado Pago se guardaban como `estadoPedido: 'pendiente'` en el admin. El webhook NO estaba actualizando los estados correctamente.
+
+### Causa Raíz
+**Conflicto de dos implementaciones:**
+- `notification_url` apuntaba a `/api/mercadopago/webhook` (controlador viejo, **no actualiza estados**)
+- Existía `/api/webhooks/mercadopago` (servicio nuevo con **lógica correcta**)
+- El webhook **viejo NO estaba actualizado** con los cambios recientes
+
+### Solución Aplicada
+
+**1. Cambiar `notification_url` en MercadoPagoService:**
+```javascript
+// ❌ ANTES
+notification_url: `${this.backendUrl}/api/mercadopago/webhook`  // Controlador viejo
+
+// ✅ DESPUÉS  
+notification_url: `${this.backendUrl}/api/webhooks/mercadopago`  // Servicio nuevo
+```
+
+**2. Registrar ruta en `index.js`:**
+```javascript
+// ✅ NUEVO
+import mercadoPagoWebhookRoutes from "./routes/mercadoPagoWebhookRoutes.js";
+app.use("/api/webhooks", mercadoPagoWebhookRoutes);
+```
+
+### Flujo Correcto Ahora
+
+| Paso | Proceso |
+|------|---------|
+| 1 | Usuario compra y paga en Mercado Pago |
+| 2 | MP aprueba el pago (status='approved') |
+| 3 | MP envía webhook a `/api/webhooks/mercadopago` |
+| 4 | MercadoPagoService.processWebhookNotification() ejecuta |
+| 5 | Actualiza: `estadoPago='approved'` + `estadoPedido='en_produccion'` |
+| 6 | Admin ve el pedido como "en_produccion" (correcto) |
+
+### Impacto
+- [x] Órdenes aprobadas ahora actualizan correctamente a `'en_produccion'`
+- [x] Admin ve órdenes rechazadas como `'cancelado'`
+- [x] Webhook procesa IDP ently y registra eventos
+
+---
+
+## [2026-01-27] - FIX: Sincronización de estados pago/pedido en webhooks
+
+**Tipo:** Fix  
+**Módulo:** MercadoPagoService.processWebhookNotification  
+**Severidad:** 🔴 Crítico
+
+### Problema
+Cuando Mercado Pago rechazaba un pago, el webhook actualizaba `estadoPago: 'rejected'` pero dejaba `estadoPedido: 'pendiente'`. El admin veía la orden como válida cuando debería aparecer como cancelada.
+
+### Comparativa (Flujo Anterior vs. Flujo Nuevo)
+
+| Aspecto | Flujo Anterior | Flujo Nuevo |
+|---|---|---|
+| **Pago rechazado** | estadoPago='rejected', estadoPedido='pendiente' | estadoPago='rejected', estadoPedido='cancelado' |
+| **Pago aprobado** | estadoPago='approved', estadoPedido='pendiente' | estadoPago='approved', estadoPedido='en_produccion' |
+| **Pago cancelado** | estadoPago='cancelled', estadoPedido='pendiente' | estadoPago='cancelled', estadoPedido='cancelado' |
+| **Pago reembolsado** | estadoPago='refunded', estadoPedido='pendiente' | estadoPago='refunded', estadoPedido='cancelado' |
+| **Visible en admin** | Orden aparece como válida/pendiente | Orden aparece como cancelada si pago falló |
+
+### Estados Mapeados (Inglés según schema)
+```javascript
+switch (paymentInfo.status) {
+  case 'approved' → estadoPago='approved', estadoPedido='en_produccion'
+  case 'pending' → estadoPago='pending'
+  case 'rejected' → estadoPago='rejected', estadoPedido='cancelado'
+  case 'cancelled' → estadoPago='cancelled', estadoPedido='cancelado'
+  case 'refunded' → estadoPago='refunded', estadoPedido='cancelado'
+}
+```
+
+### Impacto
+- [x] Admin ve órdenes con pago rechazado como "canceladas"
+- [x] Órdenes aprobadas automáticamente pasan a "en_produccion"
+- [x] Sincronización bidireccional: estadoPago ↔ estadoPedido
+
+---
+
+## [2026-01-27] - FIX: Variable `costoEnvio` no definida en desglose de orden
+
+**Tipo:** Fix  
+**Módulo:** Orders (orderController.createOrder)  
+**Severidad:** 🔴 Crítico
+
+### Problema
+Paso incorrecto de variable al método `calcularDesgloceOrden()` causaba error 500:
+```
+"costoEnvio is not defined"
+```
+El código pasaba variable `costoEnvio` que no existía, cuando debía pasar `costoEnvioCalculado`.
+
+### Comparativa (Flujo Anterior vs. Flujo Nuevo)
+
+| Aspecto | Flujo Anterior | Flujo Nuevo |
+|---|---|---|
+| **Variable enviada** | `costoEnvio` (undefined) | `costoEnvioCalculado` (definida) |
+| **Respuesta** | 500 genérico: "costoEnvio is not defined" | 201 con orden creada y desglose calculado |
+| **Función afectada** | systemConfig.calcularDesgloceOrden() | Ya recibe parámetro correcto |
+
+### Línea Corregida
+```javascript
+// ❌ ANTES (línea 189)
+const desglose = systemConfig.calcularDesgloceOrden(totalCalculado, productosValidados, costoEnvio);
+
+// ✅ DESPUÉS
+const desglose = systemConfig.calcularDesgloceOrden(totalCalculado, productosValidados, costoEnvioCalculado);
+```
+
+### Impacto
+- [x] Todas las órdenes ahora calculan desglose correctamente
+- [x] Mercado Pago preferences pueden crearse sin error
+- [x] Respuesta 201 en lugar de 500
+
+---
+
+## [2026-01-27] - Validación de items en creación de órdenes (respuesta 400)
+
+**Tipo:** Fix  
+**Módulo:** Orders (createOrder)
+
+### Problema
+Errores de validación en `items` devolvían 500 genérico, dificultando detectar el campo inválido.
+
+### Comparativa (Flujo Anterior vs. Flujo Nuevo)
+
+| Aspecto | Flujo Anterior | Flujo Nuevo |
+|---|---|---|
+| **Validación de items** | Error lanzado y capturado por errorHandler | Error validado con respuesta 400 explícita |
+| **Diagnóstico** | 500 genérico en producción | Mensaje claro del campo inválido |
+
+### Flujo Anterior
+```
+Validación items falla → throw Error → errorHandler → 500 genérico
+```
+
+### Flujo Nuevo
+```
+Validación items falla → res.status(400) con mensaje útil
+```
+
+### Validación
+- [x] Errores de `productoId` inválido retornan 400
+- [x] Errores de `cantidad` inválida retornan 400
+
+---
+
+## [2026-01-23] - Corrección: Precio Base en Campo Raíz
+
+**Tipo:** Fix  
+**Módulo:** Product
+
+### Problema
+El frontend buscaba `product.propiedadesPersonalizadas.precioBase`, pero el backend guarda `precioBase` como campo separado en el nivel raíz del modelo Product.
+
+### Flujo Anterior
+```
+VerProducto.jsx lee propiedadesPersonalizadas.precioBase
+→ Campo no existe en esa ubicación
+→ Muestra "⚠️ No configurado en BD"
+```
+
+### Flujo Nuevo
+```
+VerProducto.jsx lee product.precioBase (campo raíz)
+→ Campo existe y contiene valor correcto
+→ Muestra precio base correctamente
+```
+
+### Impacto
+- **Archivos modificados:**
+  - `gaddyel-admin/src/pages/products/VerProducto.jsx`
+  - `LOGICA_CALCULO_PRECIOS.md` (documentación corregida)
+- **Estructura de BD:** Sin cambios (ya estaba correcta)
+- **Frontend:** Lectura correcta de campo `precioBase`
+
+### Validación
+- [x] Admin local muestra precio base correctamente
+- [x] Documentación actualizada
+- [x] No se requiere migración de datos
+
+---
+
+## [2026-01-23] - Simplificación: Vista Producto Solo Muestra Precios
+
+**Tipo:** Refactor  
+**Módulo:** Admin Product View
+
+### Problema
+VerProducto.jsx mostraba desglose contable (neto en caja, comisión MP), que solo debería aparecer en la página de órdenes confirmadas.
+
+### Flujo Anterior
+```
+Ver Producto (admin)
+→ Muestra: Precio Venta, Precio Base, Recargo MP, Neto en Caja
+→ Usuario confundido: ¿Por qué veo "neto" si no es una orden?
+```
+
+### Flujo Nuevo
+```
+Ver Producto (admin)
+→ Muestra SOLO: Precio de Venta (4xl, azul) + Precio Base (lg, verde)
+→ Desglose contable solo en: OrderDetails.jsx
+```
+
+### Impacto
+- **Archivos modificados:**
+  - `gaddyel-admin/src/pages/products/VerProducto.jsx`
+  - `LOGICA_CALCULO_PRECIOS.md` (aclaración de ubicaciones)
+- **UX:** Información más clara y relevante por contexto
+
+### Validación
+- [x] VerProducto muestra solo precios simples
+- [x] OrderDetails mantiene desglose contable completo
+- [x] Documentación refleja separación de responsabilidades
+
+---
+
+## [2026-01-23] - Limpieza: OrderDetails Sin Redundancias
+
+**Tipo:** Refactor  
+**Módulo:** Admin Order Details
+
+### Problema
+OrderDetails.jsx tenía 3 secciones diferentes mostrando la misma información contable con formatos distintos, generando confusión.
+
+### Flujo Anterior
+```
+OrderDetails.jsx
+├─ Sección 1: "Resumen de Precios"
+├─ Sección 2: "Desglose Items"
+└─ Sección 3: "Información Contable"
+→ Mismos datos, 3 formas diferentes
+```
+
+### Flujo Nuevo
+```
+OrderDetails.jsx
+└─ Sección única: "Desglose Contable"
+   ├─ Precio Base Items: $95,000
+   ├─ Envío: $12,000
+   ├─ Ajuste Redondeo: $27
+   ├─ TOTAL FACTURADO: $102,900
+   ├─ Comisión MP (7.61%): -$7,831
+   └─ NETO EN CAJA: $95,069
+```
+
+### Impacto
+- **Archivos modificados:**
+  - `gaddyel-admin/src/pages/orders/OrderDetails.jsx`
+- **UX:** Claridad en la auditoría contable
+- **Backend:** Sin cambios (desglose ya se calculaba correctamente)
+
+### Validación
+- [x] Una sola sección contable visible
+- [x] Todas las métricas correctas
+- [x] Fórmulas validadas con órdenes reales
+
+---
+
+## [2026-01-20] - Fix: Webhook Mercado Pago Idempotencia
+
+**Tipo:** Security + Fix  
+**Módulo:** Mercado Pago Webhooks
+
+### Problema
+Webhooks duplicados de MP podían crear múltiples órdenes para el mismo pago.
+
+### Flujo Anterior
+```
+Webhook recibido → Crea orden → Guarda en BD
+Webhook duplicado → Crea orden → Duplicado en BD ❌
+```
+
+### Flujo Nuevo
+```
+Webhook recibido
+→ Valida firma MP
+→ Busca por mercadoPagoId (índice único)
+→ Si existe: ignora
+→ Si no existe: crea orden
+→ Guarda con mercadoPagoId único
+```
+
+### Impacto
+- **Archivos modificados:**
+  - `src/controllers/mercadoPagoController.js`
+  - `src/models/Order.js` (índice único en mercadoPagoId)
+- **Seguridad:** Prevención de duplicados
+- **Base de datos:** Migración para agregar índice único
+
+### Validación
+- [x] Tests de webhook con IDs duplicados
+- [x] Logs de winston para idempotencia
+- [x] Índice único verificado en MongoDB
+
+---
+
+## Template para Nuevas Entradas
+
+```markdown
+## [YYYY-MM-DD] - Título del Cambio
+
+**Tipo:** [Feature/Fix/Refactor/Security]  
+**Módulo:** [Product/Order/Auth/Config/...]
+
+### Problema
+Descripción breve del problema identificado
+
+### Flujo Anterior
+```
+Paso 1 → Paso 2 → Resultado
+```
+
+### Flujo Nuevo
+```
+Paso 1 → Paso 2 → Paso 3 → Resultado mejorado
+```
+
+### Impacto
+- **Archivos modificados:** Lista de archivos
+- **Base de datos:** ¿Requiere migración?
+- **Dependencias:** ¿Cambios en packages?
+
+### Validación
+- [ ] Tests pasados
+- [ ] Logs verificados
+- [ ] Documentación actualizada
+```
