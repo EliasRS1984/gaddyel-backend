@@ -5,6 +5,13 @@ import OrderEventLog from '../models/OrderEventLog.js';
 const router = express.Router();
 
 /**
+ * ✅ MIDDLEWARE: Parser JSON para webhooks
+ * CRÍTICO: Esta ruta se monta ANTES del express.json() global,
+ * por lo que necesitamos nuestro propio parser aquí.
+ */
+router.use(express.json({ limit: '10kb' }));
+
+/**
  * ✅ WEBHOOK DE MERCADO PAGO
  * POST /api/webhooks/mercadopago
  * 
