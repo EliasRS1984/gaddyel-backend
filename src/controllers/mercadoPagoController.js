@@ -2,7 +2,7 @@ import axios from 'axios';
 import crypto from 'crypto';
 import Order from '../models/Order.js';
 import Client from '../models/Client.js';
-import WebhookLog from '../models/WebhookLog.js';
+import WebhookLog from '../models/WebhookLog.js'; // ⚠️ LEGACY - Migrar a OrderEventLog
 import MercadoPagoService from '../services/MercadoPagoService.js';
 import logger from '../utils/logger.js';
 

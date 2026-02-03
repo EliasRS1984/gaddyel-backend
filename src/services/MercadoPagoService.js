@@ -62,8 +62,14 @@ class MercadoPagoService {
         try {
             console.log(`\n🔵 [MP Service] Creando preferencia para orden: ${order._id}`);
 
-            // ✅ MAPEAR ITEMS (Estructura validada por MP API)
-            // Validación: id único, title, quantity (entero), unit_price (número)
+            // ✅ MAPEAR ITEMS (Estructura completa según recomendaciones MP)
+            // Campos CRÍTICOS para alcanzar 100/100 en calidad de integración:
+            // - id: Código único del item
+            // - title: Nombre del item
+            // - description: Descripción del item (mejora tasa de aprobación)
+            // - category_id: Categoría (mejora prevención de fraude)
+            // - quantity: Cantidad
+            // - unit_price: Precio unitario
             const items = order.items.map((item, index) => {
                 const itemId = `${order._id.toString()}-item-${index}`; // ID único
                 const quantity = parseInt(item.cantidad) || 1;
@@ -76,6 +82,8 @@ class MercadoPagoService {
                 return {
                     id: itemId,
                     title: (item.nombre || 'Producto Gaddyel').substring(0, 256),
+                    description: item.descripcion || `Producto personalizado: ${item.nombre}`,
+                    category_id: 'others', // Categoría: others, art, toys, fashion, etc.
                     quantity: quantity,
                     unit_price: unitPrice,
                     currency_id: 'ARS'
@@ -113,14 +121,42 @@ class MercadoPagoService {
                 console.log(`   💳 Recargo pasarela agregado: ARS $${surcharge} (${label})`);
             }
 
-            // ✅ INFORMACIÓN DEL COMPRADOR (solo campos que MP acepta)
-            // REQUERIDO: email | OPCIONAL: name, surname
-            // ⚠️ NO incluir: phone, address (causa errores en validación)
+            // ✅ INFORMACIÓN DEL COMPRADOR (Completa para optimizar aprobación)
+            // Campos CRÍTICOS según recomendaciones MP (mejora prevención de fraude):
+            // - email: OBLIGATORIO
+            // - name: Nombre (recomendado)
+            // - surname: Apellido (recomendado)
+            // - phone: Teléfono (opcional pero mejora aprobación)
+            // - address: Dirección (opcional pero mejora aprobación)
+            
+            // Extraer nombre completo del comprador
+            const nombreCompleto = order.datosComprador?.nombre || '';
+            const partesNombre = nombreCompleto.trim().split(' ');
+            const nombre = partesNombre[0] || 'Cliente';
+            const apellido = partesNombre.slice(1).join(' ') || 'Gaddyel';
+            
             const payer = {
-                email: order.datosComprador?.email  // OBLIGATORIO
-                // name: nombre,                      // OPCIONAL: Comentado para evitar fallos
-                // surname: apellidos                 // OPCIONAL: Comentado para evitar fallos
+                email: order.datosComprador?.email, // OBLIGATORIO
+                name: nombre,                        // Recomendado: Mejora aprobación
+                surname: apellido                    // Recomendado: Mejora aprobación
             };
+            
+            // ✅ Agregar teléfono si está disponible (mejora aprobación)
+            if (order.datosComprador?.telefono) {
+                payer.phone = {
+                    area_code: '',
+                    number: order.datosComprador.telefono.toString()
+                };
+            }
+            
+            // ✅ Agregar dirección si está disponible (mejora aprobación)
+            if (order.datosComprador?.direccion) {
+                payer.address = {
+                    street_name: order.datosComprador.direccion,
+                    street_number: order.datosComprador.numero || '',
+                    zip_code: order.datosComprador.codigoPostal || ''
+                };
+            }
             
             if (!payer.email) {
                 throw new Error('Email del comprador es requerido');
@@ -133,23 +169,28 @@ class MercadoPagoService {
                 pending: `${this.frontendUrl}/pedido-pendiente/${order._id}`
             };
 
-            // ✅ CONFIGURACIÓN DE PREFERENCIA (Estándares MP SDK v2.0+)
-            // ⚠️ IMPORTANTE: back_urls y notification_url necesitan URLs PÚBLICAS
-            // MP puede redirigir a Render/Vercel (URLs públicas en producción)
+            // ✅ CONFIGURACIÓN DE PREFERENCIA (Optimizada para 100/100)
+            // Campos agregados según recomendaciones de calidad MP:
+            // - statement_descriptor: Mejora experiencia de compra (aparece en resumen de tarjeta)
+            // - binary_mode: Aprobación instantánea (recomendado para e-commerce)
+            // - expires, expiration_date_from/to: Vigencia de la preferencia
             const preferenceData = {
                 items,
                 payer,
                 back_urls: backUrls,
                 // ✅ auto_return: Redirige automáticamente después del pago
-                // 'approved': Solo si pago fue exitoso
-                // 'all': Siempre redirige (éxito o fallo)
-                auto_return: 'all', // Redirige en todos los casos
+                auto_return: 'all',
                 external_reference: order._id.toString(),
+                // ✅ statement_descriptor: Aparece en el resumen de tarjeta del comprador
                 statement_descriptor: 'GADDYEL',
                 // ✅ notification_url: Webhook que MP llama cuando hay eventos de pago
-                // CRÍTICO: Debe usar /api/webhooks/mercadopago (con MercadoPagoService)
-                // ANTES se usaba /api/mercadopago/webhook pero NO actualizaba estados correctamente
                 notification_url: `${this.backendUrl}/api/webhooks/mercadopago`,
+                // ✅ binary_mode: Respuesta instantánea (approved/rejected, sin pending)
+                binary_mode: true,
+                // ✅ expires: Preferencia válida solo 24 horas
+                expires: true,
+                expiration_date_from: new Date().toISOString(),
+                expiration_date_to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
                 payment_methods: {
                     installments: 12,
                     default_installments: 1
@@ -162,16 +203,21 @@ class MercadoPagoService {
             };
 
             // 🔍 DEBUG: Validar antes de enviar a MP
-            console.log('\n🔍 [DEBUG] Validando preferencia...');
-            console.log(`   Items: ${items.length} producto(s)`);
+            console.log('\n🔍 [DEBUG] Validando preferencia optimizada (100/100)...');
+            console.log(`   Items: ${items.length} producto(s) con descripción y categoría`);
             console.log(`   Total items: ARS $${items.reduce((sum, i) => sum + (i.quantity * i.unit_price), 0)}`);
-            console.log(`   Comprador: ${payer.email}`);
+            console.log(`   Comprador: ${payer.name} ${payer.surname} <${payer.email}>`);
+            if (payer.phone) console.log(`   Teléfono: ${payer.phone.number}`);
+            if (payer.address) console.log(`   Dirección: ${payer.address.street_name}`);
+            console.log(`   Statement Descriptor: ${preferenceData.statement_descriptor}`);
+            console.log(`   Binary Mode: ${preferenceData.binary_mode ? 'Sí (aprobación instantánea)' : 'No'}`);
+            console.log(`   Vigencia: ${preferenceData.expires ? '24 horas' : 'Sin límite'}`);
             console.log(`   Auto-return: ${preferenceData.auto_return}`);
             console.log(`   Back URLs:`);
             console.log(`     • Success: ${backUrls.success}`);
             console.log(`     • Failure: ${backUrls.failure}`);
             console.log(`     • Pending: ${backUrls.pending}`);
-            console.log(`   Webhook: ${preferenceData.notification_url ? 'Habilitado' : 'Deshabilitado (desarrollo)'}`);
+            console.log(`   Webhook: ${preferenceData.notification_url}`);
 
             // 📤 ENVIAR A MERCADO PAGO API con idempotency key
             console.log('\n📤 Enviando preferencia a Mercado Pago API...');
