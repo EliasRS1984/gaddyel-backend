@@ -6,56 +6,117 @@ import Client from '../models/Client.js';
 const router = express.Router();
 
 /**
- * POST /api/auth/registro - Registro de nuevo cliente
- * ⚠️ TEMPORALMENTE DESHABILITADO PARA TESTING
+ * ✅ POST /api/auth/registro - Registro de nuevo cliente
+ * OPTIMIZADO 2026: Validaciones robustas de seguridad
  * Body: { nombre, email, password, whatsapp }
  */
 router.post('/registro', async (req, res) => {
     try {
-        // 🔒 BLOQUEO TEMPORAL - Solo para testing con usuarios existentes
-        return res.status(403).json({ 
-            error: 'El registro de nuevos usuarios está temporalmente deshabilitado. Por favor contacta al administrador.',
-            message: 'Registration is temporarily disabled for testing. Use existing credentials only.'
-        });
-
-        // El código original está abajo pero no se ejecuta
         const { nombre, email, password, whatsapp } = req.body;
 
-        // Validación básica
+        // ✅ VALIDACIÓN 1: Campos requeridos
         if (!nombre || !email || !password || !whatsapp) {
             return res.status(400).json({ 
-                error: 'Nombre, email, contraseña y WhatsApp son requeridos' 
+                error: 'Todos los campos son requeridos',
+                campos: { nombre, email, password: !!password, whatsapp }
             });
         }
 
-        // Validar longitud de contraseña
-        if (password.length < 6) {
+        // ✅ VALIDACIÓN 2: Formato de nombre
+        const nombreTrim = nombre.trim();
+        if (nombreTrim.length < 3) {
             return res.status(400).json({ 
-                error: 'La contraseña debe tener al menos 6 caracteres' 
+                error: 'El nombre debe tener al menos 3 caracteres' 
+            });
+        }
+        if (nombreTrim.length > 100) {
+            return res.status(400).json({ 
+                error: 'El nombre es demasiado largo (máximo 100 caracteres)' 
+            });
+        }
+        if (!/^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$/.test(nombreTrim)) {
+            return res.status(400).json({ 
+                error: 'El nombre solo puede contener letras y espacios' 
             });
         }
 
-        // Verificar si el email ya existe
-        const clienteExistente = await Client.findOne({ email: email.toLowerCase() });
+        // ✅ VALIDACIÓN 3: Formato de email
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        const emailLower = email.toLowerCase().trim();
+        if (!emailRegex.test(emailLower)) {
+            return res.status(400).json({ 
+                error: 'Formato de email inválido' 
+            });
+        }
+        if (emailLower.length > 255) {
+            return res.status(400).json({ 
+                error: 'Email demasiado largo' 
+            });
+        }
+
+        // ✅ VALIDACIÓN 4: Fortaleza de contraseña (OWASP)
+        if (password.length < 8) {
+            return res.status(400).json({ 
+                error: 'La contraseña debe tener al menos 8 caracteres' 
+            });
+        }
+        if (password.length > 128) {
+            return res.status(400).json({ 
+                error: 'La contraseña es demasiado larga' 
+            });
+        }
+        if (!/(?=.*[a-z])/.test(password)) {
+            return res.status(400).json({ 
+                error: 'La contraseña debe contener al menos una letra minúscula' 
+            });
+        }
+        if (!/(?=.*[A-Z])/.test(password)) {
+            return res.status(400).json({ 
+                error: 'La contraseña debe contener al menos una letra mayúscula' 
+            });
+        }
+        if (!/(?=.*\d)/.test(password)) {
+            return res.status(400).json({ 
+                error: 'La contraseña debe contener al menos un número' 
+            });
+        }
+
+        // ✅ VALIDACIÓN 5: Formato de WhatsApp
+        const whatsappClean = whatsapp.replace(/[\s\-+]/g, '');
+        if (!/^\d{10,15}$/.test(whatsappClean)) {
+            return res.status(400).json({ 
+                error: 'Formato de WhatsApp inválido (10-15 dígitos)' 
+            });
+        }
+
+        // ✅ VALIDACIÓN 6: Verificar email duplicado
+        const clienteExistente = await Client.findOne({ email: emailLower });
         if (clienteExistente) {
-            return res.status(400).json({ 
-                error: 'Este email ya está registrado' 
+            console.log(`⚠️ Intento de registro con email existente: ${emailLower}`);
+            return res.status(409).json({ 
+                error: 'Este email ya está registrado. ¿Deseas iniciar sesión?' 
             });
         }
 
-        // Crear nuevo cliente (el pre-save hook hasheará la contraseña automáticamente)
+        // ✅ CREAR CLIENTE
         const nuevoCliente = new Client({
-            nombre,
-            email: email.toLowerCase(),
-            password: password, // Sin hashear - el pre-save hook lo hará
-            whatsapp,
-            activo: true
+            nombre: nombreTrim,
+            email: emailLower,
+            password: password, // El pre-save hook lo hasheará
+            whatsapp: whatsappClean,
+            activo: true,
+            ultimaActividad: new Date()
         });
 
         await nuevoCliente.save();
 
-        // Generar token JWT
+        // ✅ GENERAR TOKEN JWT
         const secret = process.env.JWT_SECRET || process.env.JWT_ACCESS_SECRET;
+        if (!secret) {
+            console.error('❌ JWT_SECRET no configurado');
+            return res.status(500).json({ error: 'Error de configuración del servidor' });
+        }
+
         const token = jwt.sign(
             { 
                 id: nuevoCliente._id, 
@@ -66,7 +127,7 @@ router.post('/registro', async (req, res) => {
             { expiresIn: '30d' }
         );
 
-        console.log('✅ Cliente registrado:', nuevoCliente.email);
+        console.log('✅ Cliente registrado exitosamente:', nuevoCliente.email);
 
         res.status(201).json({
             exito: true,
@@ -78,17 +139,27 @@ router.post('/registro', async (req, res) => {
                 nombre: nuevoCliente.nombre,
                 email: nuevoCliente.email,
                 whatsapp: nuevoCliente.whatsapp,
-                domicilio: nuevoCliente.domicilio || nuevoCliente.direccion,
-                localidad: nuevoCliente.localidad || nuevoCliente.ciudad,
+                domicilio: nuevoCliente.domicilio || '',
+                localidad: nuevoCliente.localidad || '',
                 provincia: nuevoCliente.provincia || '',
-                codigoPostal: nuevoCliente.codigoPostal
+                codigoPostal: nuevoCliente.codigoPostal || ''
             }
         });
 
     } catch (error) {
         console.error('❌ Error en registro:', error.message);
         console.error('   Stack:', error.stack);
-        res.status(500).json({ error: 'Error al crear la cuenta: ' + error.message });
+        
+        // Manejo específico de errores de MongoDB
+        if (error.code === 11000) {
+            return res.status(409).json({ 
+                error: 'Este email ya está registrado' 
+            });
+        }
+        
+        res.status(500).json({ 
+            error: 'Error al crear la cuenta. Intenta nuevamente.' 
+        });
     }
 });
 
