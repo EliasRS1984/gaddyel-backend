@@ -1,9 +1,8 @@
 import express from "express";
-import { obtenerProductos, crearProducto, obtenerProductoPorId, obtenerProductosDestacados, obtenerProductosSinPaginacion } from "../controllers/productController.js";
-import { upload } from "../middleware/upload.js";
-
+import { obtenerProductos, obtenerProductoPorId, obtenerProductosDestacados, obtenerProductosSinPaginacion } from "../controllers/productController.js";
 
 const router = express.Router();
+
 // Obtener productos destacados
 router.get("/destacados", obtenerProductosDestacados);
 
@@ -16,8 +15,8 @@ router.get("/", obtenerProductos);
 // Obtener un producto por ID (NUEVA RUTA)
 router.get("/:id", obtenerProductoPorId);
 
-// Crear producto con imagen (una sola imagen)
-router.post("/", upload.single("imagen"), crearProducto);
+// ❌ NOTA: Creación de productos se hace desde /api/admin/productos (adminProductosRoutes)
+// Esta ruta pública no se usa
 
 
 
