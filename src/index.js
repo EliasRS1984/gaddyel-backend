@@ -15,7 +15,6 @@ import adminClientesRoutes from "./routes/adminClientesRoutes.js";
 import orderRoutes from "./routes/orderRoutes.js";
 import mercadoPagoRoutes from "./routes/mercadoPagoRoutes.js";
 import mercadoPagoWebhookRoutes from "./routes/mercadoPagoWebhookRoutes.js";
-import clientRoutes from "./routes/clientRoutes.js";
 import clientAuthRoutes from "./routes/clientAuthRoutes.js";
 import carouselRoutes from "./routes/carouselRoutes.js";
 import paymentConfigRoutes from "./routes/paymentConfig.js";
