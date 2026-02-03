@@ -102,14 +102,13 @@ const orderSchema = new mongoose.Schema({
     // Responsable: Admin actualiza manualmente según avance
     // Uso: Seguimiento de fabricación y envío de productos
     // FLUJO:
-    //   1. ANTES PAGO: undefined/null (no inicia producción)
-    //   2. PAGO APROBADO: 'en_produccion' (webhook MP lo establece automáticamente)
-    //   3. enviado: Admin marca cuando despacha el pedido (manual)
-    //   4. entregado: Admin marca cuando cliente confirma recepción (manual - cierra pedido)
+    //   1. en_produccion: Pago aprobado, iniciar fabricación (automático)
+    //   2. enviado: Admin marca cuando despacha el pedido (manual)
+    //   3. entregado: Admin marca cuando cliente confirma recepción (manual - cierra pedido)
     estadoPedido: {
         type: String,
         enum: ['en_produccion', 'enviado', 'entregado'],
-        required: false // Solo se establece cuando pago aprobado
+        default: 'en_produccion' // Default para compatibilidad con código existente
     },
     
     // ═══════════════════════════════════════════════════════════════

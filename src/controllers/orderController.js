@@ -171,7 +171,7 @@ export const createOrder = async (req, res, next) => {
             total: totalCalculado,
             cantidadProductos,
             estadoPago: 'pending', // Esperando confirmación de pago de MP
-            // ⚠️ estadoPedido NO se establece aquí - solo cuando webhook confirme pago approved
+            // estadoPedido usa default del modelo: 'en_produccion'
             datosComprador: {
                 nombre,
                 email,
