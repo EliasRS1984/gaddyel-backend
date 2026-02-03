@@ -298,7 +298,8 @@ export const getOrders = async (req, res, next) => {
             console.log('🔒 Aplicando filtro por defecto: Excluyendo órdenes "pending"');
         }
         
-        if (estadoPedido && ['pendiente', 'procesando', 'enviado', 'entregado', 'cancelado'].includes(estadoPedido)) {
+        // ✅ Validar estado del pedido (solo 3 estados permitidos)
+        if (estadoPedido && ['en_produccion', 'enviado', 'entregado'].includes(estadoPedido)) {
             filter.estadoPedido = estadoPedido;
         }
         
@@ -424,7 +425,8 @@ export const updateOrderStatus = async (req, res, next) => {
         validateObjectId(id, 'id');
 
         // ✅ Validar estado permitido
-        const estadosValidos = ['pendiente', 'procesando', 'enviado', 'entregado', 'cancelado'];
+        // ✅ Solo 3 estados permitidos (flujo simplificado)
+        const estadosValidos = ['en_produccion', 'enviado', 'entregado'];
         if (!estadosValidos.includes(estadoPedido)) {
             return res.status(400).json({ 
                 error: `Estado inválido. Debe ser uno de: ${estadosValidos.join(', ')}` 

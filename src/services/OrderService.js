@@ -153,7 +153,8 @@ export class OrderService {
             filter.estadoPago = { $ne: 'pending' };
         }
 
-        if (estadoPedido && ['pendiente', 'procesando', 'enviado', 'entregado', 'cancelado'].includes(estadoPedido)) {
+        // ✅ Validar estado del pedido (solo 3 estados permitidos)
+        if (estadoPedido && ['en_produccion', 'enviado', 'entregado'].includes(estadoPedido)) {
             filter.estadoPedido = estadoPedido;
         }
 

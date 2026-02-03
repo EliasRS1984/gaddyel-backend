@@ -98,14 +98,17 @@ const orderSchema = new mongoose.Schema({
     
     // 🏭 ESTADO DE PRODUCCIÓN (Interno)
     // Controla: ¿En qué fase está la producción del pedido?
-    // Valores: pendiente, en_produccion, listo, enviado, entregado, cancelado
-    // Responsable: Admin/Sistema actualiza manualmente según avance de producción
+    // Valores: en_produccion, enviado, entregado
+    // Responsable: Admin actualiza manualmente según avance
     // Uso: Seguimiento de fabricación y envío de productos
-    // IMPORTANTE: Solo órdenes con estadoPago='approved' deberían estar en producción
+    // FLUJO:
+    //   1. en_produccion: Pago aprobado, iniciar fabricación (automático)
+    //   2. enviado: Admin marca cuando despacha el pedido (manual)
+    //   3. entregado: Admin marca cuando cliente confirma recepción (manual - cierra pedido)
     estadoPedido: {
         type: String,
-        enum: ['pendiente', 'en_produccion', 'listo', 'enviado', 'entregado', 'cancelado'],
-        default: 'pendiente'
+        enum: ['en_produccion', 'enviado', 'entregado'],
+        default: 'en_produccion'
     },
     
     // ===== MERCADO PAGO (LEGACY - Mantener por compatibilidad) =====
