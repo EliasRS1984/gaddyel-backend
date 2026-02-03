@@ -1,7 +1,8 @@
 import Order from '../models/Order.js';
 import Client from '../models/Client.js';
 import { Producto } from '../models/Product.js';
-import AdminUser from '../models/AdminUser.js';
+// HOTFIX: AdminUser.js eliminado (commit 9e85b9e) - no se usaba como modelo
+// Las referencias adminUser son del req.user (middleware auth), no del modelo
 import MercadoPagoService from '../services/MercadoPagoService.js';
 import { validateObjectId, validateObjectIdArray } from '../validators/noSqlInjectionValidator.js';
 import SystemConfig from '../models/SystemConfig.js';
