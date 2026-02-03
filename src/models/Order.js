@@ -153,10 +153,11 @@ const orderSchema = new mongoose.Schema({
             sandboxInitPoint: String,
             
             // Información del pago
+            // NOTA: Índice declarado explícitamente en línea 407 (sparse: true)
             paymentId: {
                 type: String,
-                sparse: true,
-                index: true
+                sparse: true
+                // index: true removido para evitar duplicado (ver orderSchema.index línea 407)
             },
             status: {
                 type: String,
