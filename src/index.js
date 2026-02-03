@@ -58,7 +58,8 @@ const getAllowedOrigins = () => {
 
     // Fallback para producción (Vercel - con soporte para URLs dinámicas)
     const productionFrontends = [
-        'https://proyecto-gaddyel.vercel.app',
+        'https://gaddyel.vercel.app',
+        'https://proyecto-gaddyel.vercel.app', // Dominio antiguo (redirecciona automáticamente)
         // Nota: URLs dinámicas de Vercel se validan con regex en cors()
     ];
 
