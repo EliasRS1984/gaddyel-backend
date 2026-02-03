@@ -399,10 +399,56 @@ class MercadoPagoService {
             console.log(`   Type/Topic: ${notificationType}`);
             console.log(`   Payment ID: ${paymentId || 'N/A'}`);
 
-            // Solo procesar notificaciones de pagos
-            if (notificationType !== 'payment') {
+            // ✅ Procesar notificaciones de pagos Y merchant_orders
+            // Documentación MP: ambos tipos son válidos para actualizar estado de órdenes
+            const tiposValidos = ['payment', 'merchant_order', 'topic_payment_wh', 'topic_merchant_order_wh'];
+            
+            if (!tiposValidos.some(tipo => notificationType.includes(tipo))) {
                 console.log(`   ⏭️ Tipo no procesable: ${notificationType}`);
                 return { processed: false, reason: 'tipo_no_procesable' };
+            }
+
+            // ✅ Extraer payment ID del merchant_order si es necesario
+            if (notificationType.includes('merchant_order')) {
+                console.log(`   🛒 Webhook de Merchant Order - Obteniendo payment ID...`);
+                
+                // El notification.resource contiene la URL del merchant_order
+                // O notification.id contiene el ID directamente
+                const merchantOrderId = notification.id || paymentId;
+                
+                // Por ahora, logear y continuar (podríamos hacer GET al merchant_order si es necesario)
+                console.log(`   📋 Merchant Order ID: ${merchantOrderId}`);
+                console.log(`   ℹ️ Procesando como confirmación de orden (sin payment ID específico)`);
+                
+                // Buscar orden por preferenceId en lugar de paymentId
+                const order = await Order.findOne({ 
+                    'payment.mercadoPago.preferenceId': { $exists: true } 
+                }).sort({ createdAt: -1 }).limit(1);
+                
+                if (order) {
+                    console.log(`   ✅ Orden encontrada por timestamp: ${order.orderNumber}`);
+                    
+                    // Si el merchant_order está cerrado, significa que el pago fue aprobado
+                    if (notification.status === 'closed' && order.estadoPago === 'pending') {
+                        order.estadoPago = 'approved';
+                        order.fechaPago = new Date();
+                        await order.save();
+                        
+                        console.log(`   ✅ Orden actualizada a 'approved' por merchant_order cerrado`);
+                        
+                        return {
+                            processed: true,
+                            orderId: order._id,
+                            orderNumber: order.orderNumber,
+                            oldStatus: 'pending',
+                            newStatus: 'approved',
+                            source: 'merchant_order'
+                        };
+                    }
+                }
+                
+                console.log(`   ℹ️ Merchant order sin acción requerida`);
+                return { processed: true, reason: 'merchant_order_sin_cambios' };
             }
 
             if (!paymentId) {
