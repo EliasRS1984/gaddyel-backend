@@ -41,6 +41,13 @@ uploads/
 archive/
 
 # ============================================
+# SCRIPTS DE UTILIDAD LOCAL (Testing/Debug)
+# ============================================
+# Scripts de mantenimiento que no forman parte del proyecto
+# Útiles localmente pero no necesarios en el repositorio
+src/scripts/
+
+# ============================================
 # IDE Y EDITORES
 # ============================================
 .vscode/
