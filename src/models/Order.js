@@ -111,22 +111,32 @@ const orderSchema = new mongoose.Schema({
         default: 'en_produccion'
     },
     
-    // ===== MERCADO PAGO (LEGACY - Mantener por compatibilidad) =====
+    // ═══════════════════════════════════════════════════════════════
+    // CAMPOS LEGACY (DEPRECATED - Mantener solo por compatibilidad)
+    // ═══════════════════════════════════════════════════════════════
+    // ⚠️ NO USAR EN CÓDIGO NUEVO - Migrar a payment.mercadoPago.*
+    
+    // @deprecated Usar payment.mercadoPago.preferenceId
     mercadoPagoId: {
         type: String,
         unique: true,
         sparse: true,
-        index: true
+        index: true,
+        select: false // No incluir en queries por defecto
     },
+    
+    // @deprecated Usar payment.mercadoPago.paymentId
     mercadoPagoPaymentId: {
         type: String,
         sparse: true,
-        index: true
+        index: true,
+        select: false
     },
     
-    // URL de checkout de Mercado Pago
+    // @deprecated Usar payment.mercadoPago.initPoint
     mercadoPagoCheckoutUrl: {
-        type: String
+        type: String,
+        select: false
     },
     
     // ===== PAYMENT (NUEVO - Sistema 2025) =====
@@ -380,13 +390,21 @@ const orderSchema = new mongoose.Schema({
     ]
 }, { timestamps: true });
 
-// Índices para búsquedas rápidas
-orderSchema.index({ clienteId: 1, fechaCreacion: -1 });
-orderSchema.index({ estadoPago: 1, fechaCreacion: -1 });
-orderSchema.index({ estadoPedido: 1, fechaCreacion: -1 });
-// orderNumber ya tiene unique: true e index: true que crea índice automático
-// mercadoPagoId ya tiene unique: true que crea índice automático
-orderSchema.index({ 'datosComprador.email': 1 });
+// ═══════════════════════════════════════════════════════════════
+// ÍNDICES OPTIMIZADOS (MongoDB Best Practices)
+// ═══════════════════════════════════════════════════════════════
+// NOTA: Índices automáticos ya creados por mongoose:
+//   - _id (automático)
+//   - orderNumber (unique: true)
+//   - expiresAt (TTL index)
+//   - mercadoPagoId (unique: true, sparse: true)
+
+// Índices compuestos para queries frecuentes del admin
+orderSchema.index({ clienteId: 1, createdAt: -1 }); // Órdenes por cliente (ordenadas por fecha)
+orderSchema.index({ estadoPago: 1, createdAt: -1 }); // Filtrado por estado de pago
+orderSchema.index({ estadoPedido: 1, createdAt: -1 }); // Filtrado por estado de producción
+orderSchema.index({ 'datosComprador.email': 1 }); // Búsqueda rápida por email del comprador
+orderSchema.index({ 'payment.mercadoPago.paymentId': 1 }, { sparse: true }); // Búsqueda por payment ID de webhook
 
 /**
  * Middleware: Calcular fecha de envío estimada antes de guardar
@@ -429,11 +447,5 @@ orderSchema.methods.isRetrasado = function() {
     const hoy = new Date();
     return hoy > this.fechaEnvioEstimada && this.estadoPedido !== 'enviado' && this.estadoPedido !== 'entregado';
 };
-
-// ✅ Índices compuestos para mejorar performance de queries
-orderSchema.index({ clienteId: 1, createdAt: -1 }); // Query común: órdenes por cliente
-orderSchema.index({ estadoPago: 1 }); // Filtrado por estado de pago
-orderSchema.index({ estadoPedido: 1, createdAt: -1 }); // Filtrado por estado de pedido
-// orderNumber ya tiene unique: true que crea índice automático
 
 export default mongoose.model('Order', orderSchema);
