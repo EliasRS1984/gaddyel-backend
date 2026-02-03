@@ -170,8 +170,8 @@ export const createOrder = async (req, res, next) => {
             costoEnvio: costoEnvioCalculado,
             total: totalCalculado,
             cantidadProductos,
-            estadoPago: 'pending',
-            estadoPedido: 'pendiente',
+            estadoPago: 'pending', // Esperando confirmación de pago de MP
+            // ⚠️ estadoPedido NO se establece aquí - solo cuando webhook confirme pago approved
             datosComprador: {
                 nombre,
                 email,

@@ -539,10 +539,12 @@ class MercadoPagoService {
                     order.expiresAt = undefined;
                     
                     // 🏭 CAMBIO AUTOMÁTICO A PRODUCCIÓN
-                    // Si pago aprobado Y pedido aún está pendiente → Mover a producción
-                    // SEPARACIÓN: estadoPago='approved' (pago OK) → estadoPedido='en_produccion' (iniciar fabricación)
-                    if (order.estadoPedido === 'pendiente') {
+                    // Si pago aprobado Y pedido NO tiene estado producción → Iniciar fabricación
+                    // LÓGICA: estadoPago='approved' (pago confirmado) → estadoPedido='en_produccion' (iniciar producción)
+                    // Solo establecer estadoPedido si NO existe (undefined/null) o si era estado obsoleto
+                    if (!order.estadoPedido || order.estadoPedido === 'pendiente') {
                         nuevoEstadoPedido = 'en_produccion';
+                        console.log(`   🏭 Orden pasará a producción (pago aprobado)`);
                     }
                     break;
 
