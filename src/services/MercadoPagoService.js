@@ -294,13 +294,15 @@ class MercadoPagoService {
                 return false;
             }
 
-            // ✅ CORREGIDO: data.id viene de query params, NO del body
-            // Según documentación MP: "data.id_url" = req.query['data.id']
-            const dataId = query['data.id'] || '';
+            // ✅ CORREGIDO: MercadoPago envía dos formatos de webhook
+            // Formato 1 (antiguo): ?data.id=xxx&type=topic_merchant_order_wh
+            // Formato 2 (nuevo): ?id=xxx&topic=payment (o topic=merchant_order)
+            // Detectar cuál formato está usando y extraer el ID correspondiente
+            const dataId = query['data.id'] || query['id'] || '';
             const manifestString = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
 
             console.log(`   🔐 Validando firma con manifest: ${manifestString}`);
-            console.log(`   🔐 data.id (query): ${dataId}`);
+            console.log(`   🔐 data.id (query): ${dataId} (formato: ${query['data.id'] ? 'antiguo' : 'nuevo'})`);
 
             // ✅ Crear HMAC SHA256
             const hmac = crypto
@@ -331,20 +333,32 @@ class MercadoPagoService {
      */
     async processWebhookNotification(notification) {
         try {
-            const { action, data, type } = notification;
+            // ✅ SOPORTE PARA DOS FORMATOS DE WEBHOOK MP:
+            // Formato 1 (antiguo): { action, data: {id}, type }
+            // Formato 2 (nuevo): { resource, topic }
+            
+            let paymentId, notificationType;
+            
+            if (notification.topic) {
+                // Formato nuevo: ?id=xxx&topic=payment
+                notificationType = notification.topic;
+                paymentId = notification.resource; // resource contiene el ID directamente
+            } else {
+                // Formato antiguo: ?data.id=xxx&type=topic_payment_wh
+                notificationType = notification.type;
+                paymentId = notification.data?.id;
+            }
 
             console.log(`\n🔔 [MP Webhook] Procesando notificación`);
-            console.log(`   Type: ${type}`);
-            console.log(`   Action: ${action}`);
-            console.log(`   Data ID: ${data?.id || 'N/A'}`);
+            console.log(`   Type/Topic: ${notificationType}`);
+            console.log(`   Payment ID: ${paymentId || 'N/A'}`);
 
             // Solo procesar notificaciones de pagos
-            if (type !== 'payment') {
-                console.log(`   ⏭️ Tipo no procesable: ${type}`);
+            if (notificationType !== 'payment') {
+                console.log(`   ⏭️ Tipo no procesable: ${notificationType}`);
                 return { processed: false, reason: 'tipo_no_procesable' };
             }
 
-            const paymentId = data?.id;
             if (!paymentId) {
                 console.log(`   ❌ Payment ID no encontrado en notificación`);
                 return { processed: false, reason: 'payment_id_faltante' };
