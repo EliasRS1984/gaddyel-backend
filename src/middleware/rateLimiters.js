@@ -18,12 +18,17 @@
  * ======================================================
  */
 
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
 // ======== FUNCIÓN AUXILIAR ========
 // Genera la clave de identificación para el rate limiter.
-// Usa IP por defecto, que es la forma estándar y compatible con todas las versiones.
-const ipKeyGen = (req) => req.ip ?? req.headers['x-forwarded-for'] ?? 'unknown';
+// Usa ipKeyGenerator (función oficial de express-rate-limit) en lugar de req.ip directo,
+// porque req.ip no maneja correctamente las direcciones IPv6.
+// Sin este helper, un usuario con IPv6 podría saltear los límites de velocidad
+// enviando variantes de su dirección (::ffff:1.2.3.4 vs 1.2.3.4, etc).
+// ¿Error ERR_ERL_KEY_GEN_IPV6 en los logs? → Este helper lo resuelve.
+// Documentación: https://express-rate-limit.github.io/ERR_ERL_KEY_GEN_IPV6/
+const ipKeyGen = (req) => ipKeyGenerator(req);
 
 // ======== LÍMITE PARA CREAR ÓRDENES ========
 // Máximo 10 órdenes por usuario/IP cada 15 minutos.

@@ -12,7 +12,10 @@
 # DEPENDENCIAS (Generadas por npm)
 # ============================================
 node_modules/
-package-lock.json
+# package-lock.json se incluye en el repositorio intencionalmente.
+# Render usa este archivo para instalar exactamente las mismas versiones
+# que se testearon localmente, evitando que aparezcan vulnerabilidades
+# por versiones distintas de dependencias transitivas.
 yarn.lock
 
 # ============================================
