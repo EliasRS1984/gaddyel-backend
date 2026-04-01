@@ -125,5 +125,3 @@ export const validarProducto = (schema) => (req, res, next) => {
     req.body = value;
     next();
 };
-    next();
-};
