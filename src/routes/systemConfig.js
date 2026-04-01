@@ -1,17 +1,14 @@
-/**
- * Routes: SystemConfig
- * 
- * ENDPOINTS:
- * - GET    /api/system-config                      - Obtener configuración actual
- * - PUT    /api/system-config                      - Actualizar configuración
- * - GET    /api/system-config/historial            - Ver historial de cambios
- * - POST   /api/system-config/preview-precio       - Calcular preview de precio
- * - POST   /api/system-config/migrate-pricing      - Ejecutar migración de precios (una vez)
- * - POST   /api/system-config/recalcular-precios   - Recalcular todos los precios con nueva tasa
- * - POST   /api/system-config/limpiar-estructura   - Limpiar estructura vieja de precios en propiedadesPersonalizadas
- * 
- * SEGURIDAD:
- * - Todos los endpoints requieren autenticación de admin
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * Las rutas de configuración global del sistema.
+ * Permiten al admin ajustar envío, comisiones y ejecutar
+ * las herramientas de migración de precios.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿Los precios no cambian al actualizar la tasa? → Revisar PUT / en systemConfigController
+ * - ¿La migración de precios falla? → Revisar POST /migrate-pricing
+ * ======================================================
  */
 
 import express from 'express';
@@ -25,31 +22,31 @@ import {
   limpiarEstructuraPrecios
 } from '../controllers/systemConfigController.js';
 import verifyToken from '../middleware/authMiddleware.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
 
-// Proteger todas las rutas con autenticación de admin
+// ======== VERIFICACIÓN DE ROL ========
+// Estas rutas controlan migración de precios y configuración global del sistema.
+// Son las rutas más sensibles del backend: un acceso no autorizado podría
+// recalcular todos los precios o corromper la estructura de datos.
+const soloAdmin = (req, res, next) => {
+    if (!req.user || req.user.rol !== 'admin') {
+        logger.security('Intento de acceso a configuración del sistema sin rol admin', { userId: req.user?.id });
+        return res.status(403).json({ error: 'Solo administradores pueden acceder a esta configuración' });
+    }
+    next();
+};
+
 router.use(verifyToken);
+router.use(soloAdmin);
 
-// Obtener configuración actual
 router.get('/', obtenerConfiguracion);
-
-// Actualizar configuración
 router.put('/', actualizarConfiguracion);
-
-// Ver historial de cambios
 router.get('/historial', obtenerHistorial);
-
-// Calcular preview de precios
 router.post('/preview-precio', calcularPreviewPrecio);
-
-// Ejecutar migración de precios (agregar precioBase a productos existentes - UNA VEZ)
 router.post('/migrate-pricing', migrarPrecios);
-
-// Recalcular TODOS los precios con nueva tasa de comisión
 router.post('/recalcular-precios', recalcularPrecios);
-
-// Limpiar estructura: mover campos de precioBase desde propiedadesPersonalizadas a nivel raíz
 router.post('/limpiar-estructura', limpiarEstructuraPrecios);
 
 export default router;

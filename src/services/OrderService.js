@@ -1,7 +1,22 @@
-/**
- * OrderService - Capa de servicios para lógica de órdenes
- * ✅ Separa responsabilidades: Controllers vs Business Logic
- * ✅ Usa .lean() para mejor performance en lecturas
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * Lógica de negocio para consultas y reportes de pedidos.
+ * Los controladores llaman a estas funciones en lugar de
+ * hablar directamente con la base de datos.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. Cada método recibe parámetros simples (IDs, filtros).
+ * 2. Aplica .lean() en lecturas para mayor velocidad.
+ * 3. Devuelve los datos listos para que el controlador
+ *    los envíe al cliente.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿Los pedidos no aparecen en el panel? → Revisa getOrdersFiltered()
+ *   y los filtros de estadoPago.
+ * - ¿El dashboard no muestra estadísticas? → Revisa getSalesReport()
+ *   y getAllOrdersNoPagination().
+ * ======================================================
  */
 
 import Order from '../models/Order.js';
@@ -9,42 +24,38 @@ import Client from '../models/Client.js';
 import { Producto } from '../models/Product.js';
 
 export class OrderService {
-    /**
-     * ✅ Obtiene órdenes de un cliente con .lean()
-     * Performance: 50%+ más rápido que sin .lean()
-     */
+
+    // ======== PEDIDOS DE UN CLIENTE ========
+    // Devuelve la lista de pedidos de un cliente, del más reciente al más antiguo.
     static async getOrdersByClient(clientId, limit = 20, skip = 0) {
         return Order
             .find({ clienteId: clientId })
-            .lean() // ✅ Solo devuelve objetos planos
+            .lean()
             .limit(limit)
             .skip(skip)
             .sort({ createdAt: -1 });
     }
 
-    /**
-     * ✅ Obtiene una orden específica (sin .lean si se va a modificar)
-     */
+    // ======== OBTENER UN PEDIDO POR ID ========
+    // Trae el pedido completo con nombre e email del cliente y los productos.
+    // No usa .lean() porque el resultado puede necesitar guardarse.
     static async getOrderById(orderId) {
         return Order.findById(orderId)
             .populate('clienteId', 'nombre email whatsapp')
             .populate('items.productoId', 'nombre precio');
     }
 
-    /**
-     * ✅ Obtiene múltiples productos eficientemente
-     * Una sola query en lugar de N queries
-     */
+    // ======== OBTENER MÚLTIPLES PRODUCTOS ========
+    // Una sola consulta a la base de datos en lugar de una por cada producto.
     static async getProductsByIds(productIds) {
         return Producto
             .find({ _id: { $in: productIds } })
-            .lean() // ✅ Performance critical
+            .lean()
             .select('_id nombre precio stock cantidadUnidades');
     }
 
-    /**
-     * ✅ Obtiene estadísticas de cliente usando aggregation
-     */
+    // ======== ESTADÍSTICAS DE UN CLIENTE ========
+    // Total de pedidos, monto acumulado y promedio de compra.
     static async getClientStats(clientId) {
         const stats = await Order.aggregate([
             { $match: { clienteId: clientId } },
@@ -61,9 +72,8 @@ export class OrderService {
         return stats[0] || { totalOrders: 0, totalSpent: 0, averageOrder: 0 };
     }
 
-    /**
-     * ✅ Obtiene órdenes con filtros avanzados (para admin)
-     */
+    // ======== PEDIDOS CON FILTROS (PARA EL PANEL ADMIN) ========
+    // Permite filtrar por estado de pago, estado del pedido y rango de fechas.
     static async getOrdersFiltered(filters = {}, limit = 50, skip = 0) {
         const {
             clienteId,
@@ -79,7 +89,6 @@ export class OrderService {
         if (estadoPago) query.estadoPago = estadoPago;
         if (estadoPedido) query.estadoPedido = estadoPedido;
 
-        // Filtrar por rango de fechas
         if (fechaDesde || fechaHasta) {
             query.createdAt = {};
             if (fechaDesde) query.createdAt.$gte = new Date(fechaDesde);
@@ -88,15 +97,14 @@ export class OrderService {
 
         return Order
             .find(query)
-            .lean() // ✅ Para reportes/lecturas
+            .lean()
             .limit(limit)
             .skip(skip)
             .sort({ createdAt: -1 });
     }
 
-    /**
-     * ✅ Obtiene resumen de ventas por período (para dashboard admin)
-     */
+    // ======== REPORTE DE VENTAS POR FECHA ========
+    // Agrupa los pedidos aprobados por día y suma el total vendido.
     static async getSalesReport(fechaDesde, fechaHasta) {
         return Order.aggregate([
             {
@@ -104,7 +112,9 @@ export class OrderService {
                     createdAt: {
                         $gte: new Date(fechaDesde),
                         $lte: new Date(fechaHasta)
-                    }
+                    },
+                    // Solo órdenes con pago confirmado — no incluir pendientes ni rechazadas
+                    estadoPago: 'approved'
                 }
             },
             {
@@ -123,37 +133,30 @@ export class OrderService {
         ]);
     }
 
-    /**
-     * ✅ Valida que una orden pertenezca a un cliente
-     * Previene acceso no autorizado
-     */
+    // ======== VERIFICAR QUE UN PEDIDO PERTENECE A UN CLIENTE ========
+    // Devuelve true si la orden le pertenece al cliente indicado.
+    // Impide que un cliente vea pedidos ajenos.
     static async validateOrderOwnership(orderId, clientId) {
         const order = await Order.findById(orderId).select('clienteId').lean();
         return order && order.clienteId.toString() === clientId.toString();
     }
 
-    /**
-     * ✅ NUEVO: Obtiene TODAS las órdenes sin paginación
-     * Usado por Dashboard para estadísticas
-     * @param {Object} filters - Filtros opcionales (estadoPago, estadoPedido, etc)
-     * @returns {Promise<Array>} TODAS las órdenes que coincidan con filtros
-     */
+    // ======== TODOS LOS PEDIDOS SIN PÁGINACIÓN ========
+    // Devuelve todos los pedidos que coinciden con los filtros,
+    // sin límite de registros. Usado por el dashboard de estadísticas.
+    // Por defecto excluye pedidos con pago pendiente.
     static async getAllOrdersNoPagination(filters = {}) {
         const { estadoPago, estadoPedido, fechaDesde, fechaHasta } = filters;
 
-        // ✅ Construir filtro dinámico con validación
         const filter = {};
 
-        // 🔒 FILTRO CRÍTICO: Por defecto, EXCLUIR órdenes "pending"
-        // Igual que en getOrders() del controller
+        // Por defecto se excluyen pedidos con pago aún pendiente
         if (estadoPago && ['pending', 'approved', 'refunded', 'cancelled'].includes(estadoPago)) {
             filter.estadoPago = estadoPago;
         } else if (!estadoPago) {
-            // Por defecto: Solo órdenes con pago CONFIRMADO
             filter.estadoPago = { $ne: 'pending' };
         }
 
-        // ✅ Validar estado del pedido (solo 3 estados permitidos)
         if (estadoPedido && ['en_produccion', 'enviado', 'entregado'].includes(estadoPedido)) {
             filter.estadoPedido = estadoPedido;
         }
@@ -176,7 +179,6 @@ export class OrderService {
             }
         }
 
-        // ✅ Sin paginación - devuelve TODAS
         const ordenes = await Order.find(filter)
             .lean()
             .sort({ createdAt: -1 });

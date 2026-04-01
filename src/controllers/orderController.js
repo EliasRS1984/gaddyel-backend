@@ -1,21 +1,38 @@
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * Controlador de pedidos. Maneja todo el ciclo de vida de
+ * un pedido: creación, listado, actualización de estado y eliminación.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. El cliente arma su carrito y envía los items al endpoint createOrder.
+ * 2. El servidor valida los items, recalcula los totales y crea el pedido.
+ * 3. Inmediatamente se crea la preferencia de Mercado Pago para el pago.
+ * 4. El admin puede ver todos los pedidos con filtros y cambiar sus estados.
+ * 5. Los estados del pedido son: en_produccion → enviado → entregado.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿El pedido no se crea? → Revisar createOrder (validación de items y cliente)
+ * - ¿Los totales no coinciden? → El servidor recalcula siempre; nunca confía en el cliente
+ * - ¿El admin no ve el pedido? → Revisar getOrders (los "pending" se ocultan por defecto)
+ * - ¿No se puede cambiar el estado? → Revisar updateOrderStatus (estados válidos)
+ * - ¿El botón de pago no aparece? → Revisar que MercadoPagoService funcione correctamente
+ * ======================================================
+ */
+
 import Order from '../models/Order.js';
 import Client from '../models/Client.js';
 import { Producto } from '../models/Product.js';
-// HOTFIX: AdminUser.js eliminado (commit 9e85b9e) - no se usaba como modelo
-// Las referencias adminUser son del req.user (middleware auth), no del modelo
 import MercadoPagoService from '../services/MercadoPagoService.js';
+import OrderService from '../services/OrderService.js';
 import { validateObjectId, validateObjectIdArray } from '../validators/noSqlInjectionValidator.js';
 import SystemConfig from '../models/SystemConfig.js';
+import logger from '../utils/logger.js';
+import { getNextOrderNumber } from '../services/orderNumberService.js';
 
-/**
- * ✅ Crear nueva orden con validación segura
- * Requiere: items validados, cliente con nombre y email
- * Retorna: orden creada con totales recalculados en servidor
- */
+// ======== CREAR PEDIDO ========
 export const createOrder = async (req, res, next) => {
     try {
-        console.log('📨 POST /pedidos/crear - Orden recibida');
-        
         const { items, cliente, clienteId, total: totalRecibido } = req.body;
         
         // ✅ Validación básica
@@ -50,11 +67,9 @@ export const createOrder = async (req, res, next) => {
                 return { productoId, cantidad };
             });
         } catch (error) {
-            console.warn('⚠️ Validación de items fallida:', error.message);
+            logger.warn('Validación de items fallida', { message: error.message });
             return res.status(400).json({ error: error.message });
         }
-
-        console.log('✅ Validación de items pasada');
 
         // ✅ Obtener productos con UNA sola query (evita N queries)
         const productIds = validatedItems.map(item => item.productoId);
@@ -99,20 +114,12 @@ export const createOrder = async (req, res, next) => {
         const costoEnvioCalculado = systemConfig.calcularEnvio(cantidadProductos);
         const totalCalculado = subtotalCalculado + costoEnvioCalculado;
 
-        console.log(`💰 Subtotal: ${subtotalCalculado}, Envío: ${costoEnvioCalculado}, Total: ${totalCalculado}`);
-
-        // ✅ CRÍTICO: Validar que cliente no manipuló totales (previene fraude)
+        // SEGURIDAD: Validar que el cliente no manipuló el total en su solicitud.
+        // Si la diferencia es mayor a $1 (margen de redondeo), rechazar el pedido.
+        // No se expone el total calculado para no darle información al atacante.
         if (totalRecibido !== undefined && Math.abs(totalRecibido - totalCalculado) > 1) {
-            console.warn('⚠️ FRAUDE DETECTADO - Total manipulado:', {
-                clientRecibido: totalRecibido,
-                servidorCalculado: totalCalculado,
-                diferencia: Math.abs(totalRecibido - totalCalculado)
-            });
-            
-            return res.status(400).json({ 
-                error: 'Total no coincide con cálculo servidor',
-                serverTotal: totalCalculado,
-                clientTotal: totalRecibido
+            return res.status(400).json({
+                error: 'El total enviado no coincide con el calculado por el servidor'
             });
         }
 
@@ -139,9 +146,7 @@ export const createOrder = async (req, res, next) => {
             clienteDoc.ultimaActividad = new Date();
             
             await clienteDoc.save();
-            console.log('✅ Cliente autenticado actualizado:', clienteDoc._id);
         } else {
-            // ✅ Búsqueda o creación de cliente invitado
             clienteDoc = await Client.findOne({ email });
             
             if (!clienteDoc) {
@@ -155,11 +160,9 @@ export const createOrder = async (req, res, next) => {
                     codigoPostal: codigoPostal || ''
                 });
                 await clienteDoc.save();
-                console.log('✅ Cliente nuevo creado (invitado):', clienteDoc._id);
             } else {
                 clienteDoc.ultimaActividad = new Date();
                 await clienteDoc.save();
-                console.log('✅ Cliente existente encontrado:', clienteDoc._id);
             }
         }
 
@@ -177,8 +180,8 @@ export const createOrder = async (req, res, next) => {
                 nombre,
                 email,
                 whatsapp: whatsapp || '',
-                direccion: domicilio || '',
-                ciudad: localidad || '',
+                domicilio: domicilio || '',
+                localidad: localidad || '',
                 provincia: provincia || '',
                 codigoPostal: codigoPostal || '',
                 notasAdicionales: cliente.notasAdicionales || ''
@@ -195,23 +198,14 @@ export const createOrder = async (req, res, next) => {
             comisionMercadoPago: desglose.comisionMercadoPago
         };
 
-        console.log('💰 Desglose contable:', {
-            precioBaseItems: desglose.precioBasePorItem,
-            envio: desglose.costoEnvio,
-            redondeo: desglose.ajusteRedondeoTotal,
-            comisionMP: desglose.comisionMercadoPago,
-            total: totalCalculado,
-            netoEnCaja: totalCalculado - desglose.comisionMercadoPago
-        });
-
         await orden.save();
 
-        // ✅ Generar número de orden
-        const orderNumber = 'G-' + orden._id.toString().slice(-6).toUpperCase();
+        // Asignar número de pedido secuencial (G-001, G-002, ...)
+        const orderNumber = await getNextOrderNumber();
         orden.orderNumber = orderNumber;
         await orden.save();
 
-        console.log('✅ Orden creada:', orden._id, `(${orderNumber})`);
+        logger.info('Pedido creado', { orderId: orden._id, orderNumber });
 
         // ✅ NUEVO: Crear preferencia de Mercado Pago inmediatamente
         let checkoutUrl = null;
@@ -219,29 +213,12 @@ export const createOrder = async (req, res, next) => {
         let preferenceId = null;
 
         try {
-            console.log('🔵 Intentando crear preferencia de Mercado Pago...');
-            console.log('   Orden ID:', orden._id);
-            console.log('   Total:', totalCalculado);
-            console.log('   Items:', productosValidados.length);
-            
             const mpResponse = await MercadoPagoService.createPreference(orden);
-            
-            console.log('✅ Respuesta de MP:', {
-                preferenceId: mpResponse.preferenceId,
-                initPoint: mpResponse.initPoint ? 'presente' : 'undefined',
-                sandboxInitPoint: mpResponse.sandboxInitPoint ? 'presente' : 'undefined'
-            });
-            
             checkoutUrl = mpResponse.initPoint;
             sandboxCheckoutUrl = mpResponse.sandboxInitPoint;
             preferenceId = mpResponse.preferenceId;
-            console.log('✅ Preferencia MP creada:', preferenceId);
         } catch (mpError) {
-            console.error('❌ Error creando preferencia MP:', mpError.message);
-            console.error('   Stack:', mpError.stack);
-            console.error('   El pago a través de Mercado Pago NO estará disponible');
-            console.error('   La orden fue creada, pero sin redirección a MP');
-            // No fallar si MP falla - continuar con confirmación
+            logger.error('Error creando preferencia de MP — orden guardada sin enlace de pago', { orderId: orden._id, message: mpError.message });
         }
 
         const response = {
@@ -259,9 +236,6 @@ export const createOrder = async (req, res, next) => {
             response.checkoutUrl = checkoutUrl;
             response.sandboxCheckoutUrl = sandboxCheckoutUrl;
             response.preferenceId = preferenceId;
-            console.log('📤 Retornando respuesta CON checkoutUrl');
-        } else {
-            console.log('📤 Retornando respuesta SIN checkoutUrl (MP no disponible)');
         }
 
         res.status(201).json(response);
@@ -270,16 +244,9 @@ export const createOrder = async (req, res, next) => {
     }
 };
 
-/**
- * ✅ Obtener todas las órdenes (admin) con filtros y paginación
- * Uso de .lean() para mejor performance
- */
+// ======== LISTAR PEDIDOS (ADMIN) ========
 export const getOrders = async (req, res, next) => {
     try {
-        console.log('📨 GET /pedidos - Solicitando lista de órdenes');
-        console.log('🔐 Usuario autenticado:', req.user?.id || 'Desconocido');
-        console.log('📋 Filtros:', req.query);
-        
         const { estadoPago, estadoPedido, fechaDesde, fechaHasta, page = 1, limit = 20 } = req.query;
         
         // ✅ Construir filtro dinámico con validación
@@ -296,7 +263,6 @@ export const getOrders = async (req, res, next) => {
             // ✅ Por defecto: Solo órdenes con pago CONFIRMADO (aprobado, reembolsado, o cancelado con registro)
             // Esto excluye automáticamente las órdenes "pending" que el usuario abandonó
             filter.estadoPago = { $ne: 'pending' };
-            console.log('🔒 Aplicando filtro por defecto: Excluyendo órdenes "pending"');
         }
         
         // ✅ Validar estado del pedido (solo 3 estados permitidos)
@@ -336,8 +302,6 @@ export const getOrders = async (req, res, next) => {
 
         const total = await Order.countDocuments(filter);
 
-        console.log(`✅ ${ordenes.length} órdenes encontradas de ${total} total`);
-
         res.json({ 
             success: true,
             data: ordenes,
@@ -354,24 +318,10 @@ export const getOrders = async (req, res, next) => {
     }
 };
 
-/**
- * ✅ NUEVO: Obtener TODAS las órdenes sin paginación
- * Usado por Dashboard para estadísticas
- * @route GET /pedidos/all - Devuelve TODAS las órdenes sin paginación
- * @access Admin
- */
+// ======== TODOS LOS PEDIDOS SIN PAGINACIÓN (DASHBOARD) ========
 export const getOrdersNoPagination = async (req, res, next) => {
     try {
-        console.log('📨 GET /pedidos/all - Solicitando TODAS las órdenes sin paginación');
-        console.log('🔐 Usuario autenticado:', req.user?.email || 'Desconocido');
-
-        // ✅ Importar el servicio
-        const OrderService = (await import('../services/OrderService.js')).default;
-
-        // ✅ Obtener TODAS las órdenes sin paginación
         const ordenes = await OrderService.getAllOrdersNoPagination(req.query);
-
-        console.log(`✅ ${ordenes.length} órdenes retornadas sin paginación`);
 
         res.json({
             success: true,
@@ -384,26 +334,19 @@ export const getOrdersNoPagination = async (req, res, next) => {
     }
 };
 
-/**
- * ✅ Obtener orden por ID (admin) con autorización
- * Usa .lean() para lectura optimizada
- */
+// ======== OBTENER UN PEDIDO POR ID (ADMIN) ========
 export const getOrderById = async (req, res, next) => {
     try {
         const { id } = req.params;
-        console.log(`📨 GET /pedidos/${id}`);
 
-        // ✅ Validar ObjectId
         validateObjectId(id, 'id');
 
-        const orden = await Order.findById(id)
-            .lean();
+        const orden = await Order.findById(id).lean();
 
         if (!orden) {
             return res.status(404).json({ error: 'Orden no encontrada' });
         }
 
-        console.log(`✅ Orden encontrada: ${orden.orderNumber}`);
         res.json(orden);
 
     } catch (error) {
@@ -411,22 +354,14 @@ export const getOrderById = async (req, res, next) => {
     }
 };
 
-/**
- * ✅ Actualizar estado de orden (admin)
- * Valida cambios de estado y registra historial
- */
+// ======== ACTUALIZAR ESTADO DEL PEDIDO (ADMIN) ========
 export const updateOrderStatus = async (req, res, next) => {
     try {
         const { id } = req.params;
         const { estadoPedido, notasAdmin } = req.body;
 
-        console.log(`📨 PUT /pedidos/${id}/estado - Nuevo estado: ${estadoPedido}`);
-
-        // ✅ Validar ObjectId
         validateObjectId(id, 'id');
 
-        // ✅ Validar estado permitido
-        // ✅ Solo 3 estados permitidos (flujo simplificado)
         const estadosValidos = ['en_produccion', 'enviado', 'entregado'];
         if (!estadosValidos.includes(estadoPedido)) {
             return res.status(400).json({ 
@@ -456,7 +391,7 @@ export const updateOrderStatus = async (req, res, next) => {
             return res.status(404).json({ error: 'Orden no encontrada' });
         }
 
-        console.log(`✅ Orden actualizada a estado: ${estadoPedido}`);
+        logger.info('Estado de pedido actualizado', { orderId: id, nuevoEstado: estadoPedido });
         res.json(orden);
 
     } catch (error) {
@@ -464,19 +399,13 @@ export const updateOrderStatus = async (req, res, next) => {
     }
 };
 
-/**
- * ✅ Obtener órdenes de un cliente autenticado
- * Solo el cliente puede ver sus propias órdenes (con autorización)
- */
+// ======== PEDIDOS DE UN CLIENTE AUTENTICADO ========
 export const getClientOrders = async (req, res, next) => {
     try {
         const clienteId = req.params.clienteId;
-        console.log(`📨 GET /clientes/${clienteId}/ordenes`);
 
-        // ✅ Validar ObjectId
         validateObjectId(clienteId, 'clienteId');
 
-        // ✅ Verificar autorización: cliente solo ve sus propias órdenes (o admin)
         if (req.user?.clienteId && req.user.clienteId !== clienteId && req.user?.rol !== 'admin') {
             return res.status(403).json({ error: 'No autorizado para ver estas órdenes' });
         }
@@ -484,8 +413,6 @@ export const getClientOrders = async (req, res, next) => {
         const ordenes = await Order.find({ clienteId })
             .lean()
             .sort({ createdAt: -1 });
-
-        console.log(`✅ ${ordenes.length} órdenes encontradas para cliente ${clienteId}`);
 
         res.json({
             ok: true,
@@ -498,30 +425,16 @@ export const getClientOrders = async (req, res, next) => {
     }
 };
 
-/**
- * ✅ Eliminar una orden (requiere autenticación admin)
- * Valida autorización y registra en historial (soft delete + historial)
- */
+// ======== ELIMINAR PEDIDO (ADMIN) ========
 export const deleteOrder = async (req, res, next) => {
     try {
         const { id } = req.params;
-        const adminUser = req.user; // Del middleware de autenticación
+        const adminUser = req.user;
 
-        console.log('🗑️  DELETE /pedidos/:id - Solicitud de eliminación');
-        console.log('  - Orden ID:', id);
-        console.log('  - Admin Usuario:', adminUser?.email || adminUser?.usuario || 'Sin identificar');
-        console.log('  - Admin Rol:', adminUser?.rol || 'SIN ROL');
-        console.log('  - Admin completo:', { id: adminUser?.id, usuario: adminUser?.usuario, rol: adminUser?.rol });
-
-        // ✅ Validar ObjectId
         validateObjectId(id, 'id');
 
-        // ✅ Verificar autorización (solo admin)
-        // Acepta tanto 'admin' como 'Admin' para mayor flexibilidad
         if (!adminUser || (adminUser.rol !== 'admin' && adminUser.rol !== 'Admin')) {
-            console.error('❌ Unauthorized delete attempt');
-            console.error('   User:', adminUser?.usuario || 'unknown');
-            console.error('   Role:', adminUser?.rol || 'undefined');
+            logger.security('Intento de eliminar pedido sin autorización', { orderId: id });
             return res.status(403).json({ error: 'Solo administradores pueden eliminar órdenes' });
         }
 
@@ -545,7 +458,7 @@ export const deleteOrder = async (req, res, next) => {
             }
         });
 
-        console.log('✅ Orden cancelada y registrada:', id);
+        logger.info('Pedido cancelado por admin', { orderId: id, orderNumber: order.orderNumber });
 
         res.json({
             success: true,
@@ -559,9 +472,6 @@ export const deleteOrder = async (req, res, next) => {
     }
 };
 
-/**
- * ✅ Exportar default con todos los controladores
- */
 export default {
     createOrder,
     getOrders,

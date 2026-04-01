@@ -1,24 +1,42 @@
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * Este archivo se encarga de toda la comunicación con Mercado Pago:
+ * crear preferencias de pago, validar notificaciones de cobro
+ * (webhooks) y consultar el estado de un pago.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. Al arrancar el servidor, se crea una sola instancia de este servicio.
+ * 2. Cuando un cliente va a pagar, createPreference() arma la orden
+ *    en Mercado Pago y devuelve el enlace de pago.
+ * 3. Cuando Mercado Pago confirma el cobro, validateWebhookSignature()
+ *    verifica que la notificación sea auténtica y no falsificada.
+ * 4. processWebhookNotification() actualiza el estado de la orden
+ *    en la base de datos según el resultado del pago.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿No se generan preferencias de pago? → Revisa createPreference()
+ *   y que MERCADO_PAGO_ACCESS_TOKEN esté en las variables de entorno.
+ * - ¿Los webhooks llegan pero son rechazados? → Revisa
+ *   validateWebhookSignature() y la variable MERCADO_PAGO_WEBHOOK_SECRET.
+ * - ¿El estado de la orden no se actualiza? → Revisa
+ *   processWebhookNotification() y el switch de paymentInfo.status.
+ * - Documentación oficial: https://www.mercadopago.com.ar/developers/es/reference
+ * ======================================================
+ */
+
 import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
 import crypto from 'crypto';
 import Order from '../models/Order.js';
 import OrderEventLog from '../models/OrderEventLog.js';
-
-/**
- * ✅ MERCADO PAGO SERVICE - ESTÁNDARES 2025
- * - SDK oficial v2.0+
- * - Validación de firmas de webhooks (x-signature)
- * - Idempotencia con X-Idempotency-Key
- * - Manejo robusto de errores
- */
+import logger from '../utils/logger.js';
 
 class MercadoPagoService {
     constructor() {
         const accessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN;
 
         if (!accessToken) {
-            console.warn('⚠️ MERCADO_PAGO_ACCESS_TOKEN no configurado en .env');
-            console.warn('   El servicio de Mercado Pago no estará disponible');
-            console.warn('   Configura las credenciales en .env para habilitar pagos');
+            logger.warn('MERCADO_PAGO_ACCESS_TOKEN no configurado — el servicio de pagos estará deshabilitado');
             this.enabled = false;
             return;
         }
@@ -41,28 +59,22 @@ class MercadoPagoService {
         this.backendUrl = process.env.BACKEND_URL || 'http://localhost:5000';
         this.enabled = true;
 
-        console.log('✅ MercadoPagoService inicializado');
-        console.log(`   Frontend URL: ${this.frontendUrl}`);
-        console.log(`   Backend URL: ${this.backendUrl}`);
+        logger.info('MercadoPagoService inicializado correctamente');
     }
 
-    /**
-     * ✅ CREAR PREFERENCIA DE PAGO
-     * @param {Object} order - Orden de MongoDB
-     * @returns {Promise<Object>} { preferenceId, initPoint, sandboxInitPoint }
-     */
-    /**
-      * ✅ CREAR PREFERENCIA DE PAGO - CORREGIDO 2025
-      */
+    // ======== CREAR PREFERENCIA DE PAGO ========
+    // Arma la orden en Mercado Pago y devuelve el enlace que lleva al cliente al checkout.
     async createPreference(order) {
         if (!this.enabled) {
             throw new Error('Mercado Pago no está configurado. Configura MERCADO_PAGO_ACCESS_TOKEN en .env');
         }
 
         try {
-            console.log(`\n🔵 [MP Service] Creando preferencia para orden: ${order._id}`);
+            logger.info('Creando preferencia de pago', { orderId: order._id });
 
-            // ✅ MAPEAR ITEMS (Estructura completa según recomendaciones MP)
+            // ======== ARMAR LISTA DE PRODUCTOS ========
+            // Cada producto del pedido se convierte en un ítem de Mercado Pago.
+            // Los campos id, title, category_id y description mejoran la tasa de aprobación. (Estructura completa según recomendaciones MP)
             // Campos CRÍTICOS para alcanzar 100/100 en calidad de integración:
             // - id: Código único del item
             // - title: Nombre del item
@@ -102,12 +114,11 @@ class MercadoPagoService {
                     unit_price: costoEnvio,
                     currency_id: 'ARS'
                 });
-                console.log(`   📦 Costo de envío agregado: ARS $${costoEnvio}`);
-            } else {
-                console.log(`   🎉 Envío gratis aplicado (3+ productos)`);
             }
 
-            // ✅ AGREGAR RECARGO POR PASARELA (si la orden lo trae calculado)
+            // ======== RECARGO POR PASARELA ========
+            // Si la orden ya tiene calculado un recargo por usar Mercado Pago,
+            // se agrega como ítem separado para que el total coincida.
             const surcharge = Number(order.ajustesPago?.monto) || 0;
             if (surcharge > 0) {
                 const label = order.ajustesPago?.etiqueta || 'Recargo Mercado Pago';
@@ -118,30 +129,26 @@ class MercadoPagoService {
                     unit_price: surcharge,
                     currency_id: 'ARS'
                 });
-                console.log(`   💳 Recargo pasarela agregado: ARS $${surcharge} (${label})`);
             }
 
-            // ✅ INFORMACIÓN DEL COMPRADOR (Completa para optimizar aprobación)
-            // Campos CRÍTICOS según recomendaciones MP (mejora prevención de fraude):
-            // - email: OBLIGATORIO
-            // - name: Nombre (recomendado)
-            // - surname: Apellido (recomendado)
-            // - phone: Teléfono (opcional pero mejora aprobación)
-            // - address: Dirección (opcional pero mejora aprobación)
+            // ======== DATOS DEL COMPRADOR ========
+            // Mercado Pago necesita al menos el email.
+            // El nombre, teléfono y dirección son opcionales pero mejoran
+            // la tasa de aprobación y reducen rechazos por sospecha de fraude.
             
-            // Extraer nombre completo del comprador
+            // Separar nombre y apellido del nombre completo
             const nombreCompleto = order.datosComprador?.nombre || '';
             const partesNombre = nombreCompleto.trim().split(' ');
             const nombre = partesNombre[0] || 'Cliente';
             const apellido = partesNombre.slice(1).join(' ') || 'Gaddyel';
             
             const payer = {
-                email: order.datosComprador?.email, // OBLIGATORIO
-                name: nombre,                        // Recomendado: Mejora aprobación
-                surname: apellido                    // Recomendado: Mejora aprobación
+                email: order.datosComprador?.email,
+                name: nombre,
+                surname: apellido
             };
             
-            // ✅ Agregar teléfono si está disponible (mejora aprobación)
+            // Agregar teléfono si está disponible
             if (order.datosComprador?.telefono) {
                 payer.phone = {
                     area_code: '',
@@ -149,10 +156,10 @@ class MercadoPagoService {
                 };
             }
             
-            // ✅ Agregar dirección si está disponible (mejora aprobación)
-            if (order.datosComprador?.direccion) {
+            // Agregar dirección si está disponible
+            if (order.datosComprador?.domicilio) {
                 payer.address = {
-                    street_name: order.datosComprador.direccion,
+                    street_name: order.datosComprador.domicilio,
                     street_number: order.datosComprador.numero || '',
                     zip_code: order.datosComprador.codigoPostal || ''
                 };
@@ -162,32 +169,27 @@ class MercadoPagoService {
                 throw new Error('Email del comprador es requerido');
             }
 
-            // 3. URLs de retorno (Sin parámetros extras para evitar fallos de validación)
+            // ======== URLs DE RETORNO ========
+            // Adónde lleva Mercado Pago al cliente según el resultado del pago.
             const backUrls = {
                 success: `${this.frontendUrl}/pedido-confirmado/${order._id}`,
                 failure: `${this.frontendUrl}/pedido-fallido/${order._id}`,
                 pending: `${this.frontendUrl}/pedido-pendiente/${order._id}`
             };
 
-            // ✅ CONFIGURACIÓN DE PREFERENCIA (Optimizada para 100/100)
-            // Campos agregados según recomendaciones de calidad MP:
-            // - statement_descriptor: Mejora experiencia de compra (aparece en resumen de tarjeta)
-            // - binary_mode: Aprobación instantánea (recomendado para e-commerce)
-            // - expires, expiration_date_from/to: Vigencia de la preferencia
+            // ======== ARMAR DATOS DE PREFERENCIA ========
+            // Configuración completa enviada a Mercado Pago.
+            // binary_mode = true: respuesta instantánea (aprobado o rechazado, sin "pendiente").
+            // expires = true: la preferencia vence en 24 horas.
             const preferenceData = {
                 items,
                 payer,
                 back_urls: backUrls,
-                // ✅ auto_return: Redirige automáticamente después del pago
                 auto_return: 'all',
                 external_reference: order._id.toString(),
-                // ✅ statement_descriptor: Aparece en el resumen de tarjeta del comprador
                 statement_descriptor: 'GADDYEL',
-                // ✅ notification_url: Webhook que MP llama cuando hay eventos de pago
                 notification_url: `${this.backendUrl}/api/webhooks/mercadopago`,
-                // ✅ binary_mode: Respuesta instantánea (approved/rejected, sin pending)
                 binary_mode: true,
-                // ✅ expires: Preferencia válida solo 24 horas
                 expires: true,
                 expiration_date_from: new Date().toISOString(),
                 expiration_date_to: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
@@ -202,43 +204,18 @@ class MercadoPagoService {
                 }
             };
 
-            // 🔍 DEBUG: Validar antes de enviar a MP
-            console.log('\n🔍 [DEBUG] Validando preferencia optimizada (100/100)...');
-            console.log(`   Items: ${items.length} producto(s) con descripción y categoría`);
-            console.log(`   Total items: ARS $${items.reduce((sum, i) => sum + (i.quantity * i.unit_price), 0)}`);
-            console.log(`   Comprador: ${payer.name} ${payer.surname} <${payer.email}>`);
-            if (payer.phone) console.log(`   Teléfono: ${payer.phone.number}`);
-            if (payer.address) console.log(`   Dirección: ${payer.address.street_name}`);
-            console.log(`   Statement Descriptor: ${preferenceData.statement_descriptor}`);
-            console.log(`   Binary Mode: ${preferenceData.binary_mode ? 'Sí (aprobación instantánea)' : 'No'}`);
-            console.log(`   Vigencia: ${preferenceData.expires ? '24 horas' : 'Sin límite'}`);
-            console.log(`   Auto-return: ${preferenceData.auto_return}`);
-            console.log(`   Back URLs:`);
-            console.log(`     • Success: ${backUrls.success}`);
-            console.log(`     • Failure: ${backUrls.failure}`);
-            console.log(`     • Pending: ${backUrls.pending}`);
-            console.log(`   Webhook: ${preferenceData.notification_url}`);
-
-            // 📤 ENVIAR A MERCADO PAGO API con idempotency key
-            console.log('\n📤 Enviando preferencia a Mercado Pago API...');
-            
-            // ✅ IDEMPOTENCIA: Generar clave única para evitar duplicados
+            // Enviar preferencia a Mercado Pago con clave de idempotencia
+            // para garantizar que no se creen preferencias duplicadas.
             const idempotencyKey = `pref-${order._id.toString()}-${Date.now()}`;
-            console.log(`   🔑 Idempotency Key: ${idempotencyKey}`);
             
             const response = await this.preferenceClient.create({
                 body: preferenceData,
-                requestOptions: {
-                    idempotencyKey // ✅ Garantiza operación única
-                }
+                requestOptions: { idempotencyKey }
             });
 
-            console.log(`\n✅ Preferencia creada exitosamente`);
-            console.log(`   ID: ${response.id}`);
-            console.log(`   URL Checkout: ${response.init_point}`);
-            console.log(`   URL Sandbox: ${response.sandbox_init_point || 'N/A'}`);
+            logger.info('Preferencia de pago creada', { orderId: order._id, preferenceId: response.id });
 
-            // Actualizar la orden en la base de datos
+            // Guardar el ID y enlace de pago en la orden
             order.payment = order.payment || {};
             order.payment.mercadoPago = {
                 preferenceId: response.id,
@@ -255,72 +232,49 @@ class MercadoPagoService {
             };
 
         } catch (error) {
-            console.error('\n❌ [MP Service] Error creando preferencia');
-            console.error(`   Orden: ${order._id}`);
-            console.error(`   Mensaje: ${error.message}`);
+            logger.error('Error creando preferencia de pago', { orderId: order._id, message: error.message });
             
-            // Mostrar causa raíz si está disponible
-            if (error.cause) {
-                console.error(`   Causa: ${JSON.stringify(error.cause)}`);
-            }
-            
-            // Log de auditoría del error
+            // Registrar el error en el historial de la orden para auditoría
             try {
                 await OrderEventLog.create({
                     orderId: order._id,
                     eventType: 'preference_creation_error',
-                    description: `Error creando preferencia: ${error.message}`,
-                    metadata: { error: error.message, cause: error.cause }
+                    description: 'Error al crear preferencia de pago',
+                    metadata: { message: error.message }
                 });
-            } catch (logError) {
-                console.error('No se pudo registrar el error en log');
+            } catch {
+                // Si el log falla, no interrumpir el flujo principal
             }
 
             throw new Error(`Error al crear preferencia de Mercado Pago: ${error.message}`);
         }
     }
 
-    /**
-     * ✅ OBTENER INFORMACIÓN DEL PAGO
-     * @param {string} paymentId - ID del pago en Mercado Pago
-     * @returns {Promise<Object>} Información del pago
-     */
+    // ======== CONSULTAR ESTADO DE UN PAGO ========
+    // Dado el ID de un pago, obtiene toda la información actualizada desde Mercado Pago.
     async getPaymentInfo(paymentId) {
         try {
-            console.log(`\n🔵 [MP Service] Obteniendo info de pago: ${paymentId}`);
-
             const payment = await this.paymentClient.get({ id: paymentId });
-
-            console.log(`   ✅ Pago obtenido - Status: ${payment.status}`);
-            console.log(`   💰 Monto: ${payment.transaction_amount} ${payment.currency_id}`);
-            console.log(`   📧 Email: ${payment.payer?.email || 'N/A'}`);
-
+            logger.info('Información de pago obtenida', { paymentId, status: payment.status });
             return payment;
-
         } catch (error) {
-            console.error(`❌ [MP Service] Error obteniendo pago ${paymentId}:`, error);
+            logger.error('Error obteniendo información de pago', { paymentId, message: error.message });
             throw new Error(`Error al obtener información del pago: ${error.message}`);
         }
     }
 
-    /**
-     * ✅ VALIDAR FIRMA DEL WEBHOOK (x-signature header)
-     * Documentación: https://www.mercadopago.com.ar/developers/es/docs/your-integrations/notifications/webhooks
-     * 
-     * IMPORTANTE: El data.id viene de QUERY PARAMS, no del body
-     * Template: id:[data.id_url];request-id:[x-request-id_header];ts:[ts_header];
-     * 
-     * @param {Object} headers - Headers del request
-     * @param {Object} query - Query params del request (req.query)
-     * @returns {boolean} true si la firma es válida
-     */
+    // ======== VALIDAR FIRMA DEL WEBHOOK ========
+    // Verifica que una notificación recibida fue enviada realmente por Mercado Pago
+    // y no por un tercero malicioso.
+    // Si devuelve false, la notificación debe ignorarse.
+    // Documentación: https://www.mercadopago.com.ar/developers/es/docs/your-integrations/notifications/webhooks
     validateWebhookSignature(headers, query) {
         try {
             const xSignature = headers['x-signature'];
             const xRequestId = headers['x-request-id'];
 
             if (!xSignature || !xRequestId) {
-                console.log('   ⚠️ Headers faltantes para validación de firma');
+                logger.warn('Webhook rechazado: headers de firma faltantes');
                 return false;
             }
 
@@ -336,52 +290,60 @@ class MercadoPagoService {
             });
 
             if (!ts || !hash) {
-                console.log('   ⚠️ Formato de x-signature inválido');
+                logger.warn('Webhook rechazado: formato de x-signature inválido');
                 return false;
             }
 
-            // ✅ CORREGIDO: MercadoPago envía dos formatos de webhook
-            // Formato 1 (antiguo): ?data.id=xxx&type=topic_merchant_order_wh
-            // Formato 2 (nuevo): ?id=xxx&topic=payment (o topic=merchant_order)
-            // Detectar cuál formato está usando y extraer el ID correspondiente
+            // Verificar que el webhook fue enviado hace menos de 5 minutos.
+            // Esto evita que alguien capture un webhook válido y lo reenvíe después.
+            const tsNum = parseInt(ts, 10);
+            const ahora = Math.floor(Date.now() / 1000);
+            if (isNaN(tsNum) || Math.abs(ahora - tsNum) > 300) {
+                logger.warn('Webhook rechazado: timestamp demasiado antiguo o inválido');
+                return false;
+            }
+
+            // Mercado Pago usa dos formatos de notificación;
+            // detectar cuál viene y extraer el ID de pago correspondiente.
             const dataId = query['data.id'] || query['id'] || '';
             const manifestString = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
 
-            console.log(`   🔐 Validando firma con manifest: ${manifestString}`);
-            console.log(`   🔐 data.id (query): ${dataId} (formato: ${query['data.id'] ? 'antiguo' : 'nuevo'})`);
-
-            // ✅ Crear HMAC SHA256
-            const hmac = crypto
+            // Calcular la firma esperada con HMAC SHA-256
+            const hmacCalculado = crypto
                 .createHmac('sha256', this.webhookSecret)
                 .update(manifestString)
                 .digest('hex');
 
-            const isValid = hmac === hash;
-            console.log(`   ${isValid ? '✅' : '❌'} Firma ${isValid ? 'válida' : 'inválida'}`);
-            
+            // Comparar usando timingSafeEqual para evitar que un atacante
+            // deduzca la firma correcta midiendo el tiempo de respuesta.
+            let isValid = false;
+            try {
+                isValid = crypto.timingSafeEqual(
+                    Buffer.from(hmacCalculado, 'hex'),
+                    Buffer.from(hash, 'hex')
+                );
+            } catch {
+                isValid = false;
+            }
+
             if (!isValid) {
-                console.log(`   Expected: ${hmac.substring(0, 20)}...`);
-                console.log(`   Received: ${hash.substring(0, 20)}...`);
+                logger.warn('Webhook rechazado: firma HMAC inválida');
             }
 
             return isValid;
 
         } catch (error) {
-            console.error('❌ Error validando firma del webhook:', error);
+            logger.error('Error validando firma del webhook', { message: error.message });
             return false;
         }
     }
 
-    /**
-     * ✅ PROCESAR NOTIFICACIÓN DE WEBHOOK
-     * @param {Object} notification - Datos del webhook
-     * @returns {Promise<Object>} Resultado del procesamiento
-     */
+    // ======== PROCESAR NOTIFICACIÓN DE WEBHOOK ========
+    // Cuando Mercado Pago avisa sobre un pago, esta función actualiza el estado
+    // de la orden en la base de datos según lo que haya pasado.
     async processWebhookNotification(notification) {
         try {
-            // ✅ SOPORTE PARA DOS FORMATOS DE WEBHOOK MP:
-            // Formato 1 (antiguo): { action, data: {id}, type }
-            // Formato 2 (nuevo): { resource, topic }
+            // Mercado Pago usa dos formatos de notificación; detectar cuál es.
             
             let paymentId, notificationType;
             
@@ -395,46 +357,32 @@ class MercadoPagoService {
                 paymentId = notification.data?.id;
             }
 
-            console.log(`\n🔔 [MP Webhook] Procesando notificación`);
-            console.log(`   Type/Topic: ${notificationType}`);
-            console.log(`   Payment ID: ${paymentId || 'N/A'}`);
+            logger.info('Procesando notificación de webhook', { type: notificationType, paymentId: paymentId || null });
 
-            // ✅ Procesar notificaciones de pagos Y merchant_orders
-            // Documentación MP: ambos tipos son válidos para actualizar estado de órdenes
+            // Solo se procesan notificaciones de pagos y órdenes de comercio.
             const tiposValidos = ['payment', 'merchant_order', 'topic_payment_wh', 'topic_merchant_order_wh'];
             
             if (!tiposValidos.some(tipo => notificationType.includes(tipo))) {
-                console.log(`   ⏭️ Tipo no procesable: ${notificationType}`);
                 return { processed: false, reason: 'tipo_no_procesable' };
             }
 
-            // ✅ Extraer payment ID del merchant_order si es necesario
+            // Cuando llega una notificación de merchant_order (orden de comercio),
+            // se busca la orden más reciente y se cierra si el pago fue completado.
             if (notificationType.includes('merchant_order')) {
-                console.log(`   🛒 Webhook de Merchant Order - Obteniendo payment ID...`);
-                
-                // El notification.resource contiene la URL del merchant_order
-                // O notification.id contiene el ID directamente
                 const merchantOrderId = notification.id || paymentId;
+                logger.info('Webhook de merchant order recibido', { merchantOrderId });
                 
-                // Por ahora, logear y continuar (podríamos hacer GET al merchant_order si es necesario)
-                console.log(`   📋 Merchant Order ID: ${merchantOrderId}`);
-                console.log(`   ℹ️ Procesando como confirmación de orden (sin payment ID específico)`);
-                
-                // Buscar orden por preferenceId en lugar de paymentId
                 const order = await Order.findOne({ 
                     'payment.mercadoPago.preferenceId': { $exists: true } 
                 }).sort({ createdAt: -1 }).limit(1);
                 
                 if (order) {
-                    console.log(`   ✅ Orden encontrada por timestamp: ${order.orderNumber}`);
-                    
-                    // Si el merchant_order está cerrado, significa que el pago fue aprobado
                     if (notification.status === 'closed' && order.estadoPago === 'pending') {
                         order.estadoPago = 'approved';
                         order.fechaPago = new Date();
                         await order.save();
                         
-                        console.log(`   ✅ Orden actualizada a 'approved' por merchant_order cerrado`);
+                        logger.info('Orden aprobada por merchant_order cerrado', { orderNumber: order.orderNumber });
                         
                         return {
                             processed: true,
@@ -447,36 +395,34 @@ class MercadoPagoService {
                     }
                 }
                 
-                console.log(`   ℹ️ Merchant order sin acción requerida`);
                 return { processed: true, reason: 'merchant_order_sin_cambios' };
             }
 
             if (!paymentId) {
-                console.log(`   ❌ Payment ID no encontrado en notificación`);
+                logger.warn('Webhook ignorado: payment ID no encontrado en notificación');
                 return { processed: false, reason: 'payment_id_faltante' };
             }
 
-            // ✅ Obtener información completa del pago
+            // Consultar el estado actualizado del pago en Mercado Pago
             const paymentInfo = await this.getPaymentInfo(paymentId);
 
-            // ✅ Buscar orden por external_reference
+            // Buscar la orden por el external_reference que se envió al crear la preferencia
             const orderId = paymentInfo.external_reference;
             if (!orderId) {
-                console.log(`   ❌ External reference no encontrado en pago`);
+                logger.warn('Webhook ignorado: external_reference no encontrado en el pago', { paymentId });
                 return { processed: false, reason: 'external_reference_faltante' };
             }
 
             const order = await Order.findById(orderId);
             if (!order) {
-                console.log(`   ❌ Orden no encontrada: ${orderId}`);
+                logger.warn('Webhook ignorado: orden no encontrada', { orderId });
                 return { processed: false, reason: 'orden_no_encontrada' };
             }
 
-            console.log(`   📦 Orden encontrada: ${order.orderNumber}`);
-            console.log(`   🔄 Estado actual: ${order.estadoPago}`);
-            console.log(`   💳 Estado pago MP: ${paymentInfo.status}`);
+            logger.info('Orden encontrada para actualizar', { orderNumber: order.orderNumber, estadoActual: order.estadoPago, estadoMP: paymentInfo.status });
 
-            // ✅ Actualizar información COMPLETA del pago (para comprobante en admin)
+            // ======== ACTUALIZAR DATOS DEL PAGO EN LA ORDEN ========
+            // Guardar toda la información del pago para mostrar el comprobante en el panel admin.
             order.payment = order.payment || {};
             order.payment.mercadoPago = order.payment.mercadoPago || {};
             
@@ -563,14 +509,8 @@ class MercadoPagoService {
                 order.detallesPago.cardBrand = paymentInfo.payment_method_id; // 'visa', 'master', etc
             }
 
-            console.log('✅ [Webhook] Información de tarjeta guardada:', {
-                cardLastFour: order.detallesPago.cardLastFour || 'N/A',
-                cardBrand: order.detallesPago.cardBrand || 'N/A',
-                installments: order.detallesPago.installments || 1,
-                issuerBank: order.detallesPago.issuerBank || 'N/A'
-            });
-
-            // ✅ Mapear estado de MP a estado de orden (INGLÉS según schema)
+            // ======== ACTUALIZAR ESTADO DE LA ORDEN ========
+            // Según el resultado del pago, se actualiza el estado del pedido.
             let nuevoEstadoPago = order.estadoPago;
             let nuevoEstadoPedido = order.estadoPedido;
             let descripcionEvento = '';
@@ -581,16 +521,13 @@ class MercadoPagoService {
                     descripcionEvento = `Pago aprobado - ID: ${paymentId}`;
                     order.fechaPago = order.fechaPago || new Date();
                     
-                    // ✅ CRÍTICO: Remover expiración TTL (orden aprobada no debe auto-eliminarse)
+                    // Al aprobar el pago, se elimina la fecha de vencimiento automático
+                    // para que la orden no sea eliminada por el TTL de MongoDB.
                     order.expiresAt = undefined;
                     
-                    // 🏭 CAMBIO AUTOMÁTICO A PRODUCCIÓN
-                    // Si pago aprobado Y pedido NO tiene estado producción → Iniciar fabricación
-                    // LÓGICA: estadoPago='approved' (pago confirmado) → estadoPedido='en_produccion' (iniciar producción)
-                    // Solo establecer estadoPedido si NO existe (undefined/null) o si era estado obsoleto
+                    // Si el pedido no tenía estado, pasar a producción automáticamente.
                     if (!order.estadoPedido || order.estadoPedido === 'pendiente') {
                         nuevoEstadoPedido = 'en_produccion';
-                        console.log(`   🏭 Orden pasará a producción (pago aprobado)`);
                     }
                     break;
 
@@ -599,23 +536,20 @@ class MercadoPagoService {
                     nuevoEstadoPago = 'pending';
                     descripcionEvento = `Pago pendiente - ID: ${paymentId}`;
                     
-                    // ⏰ EXTENDER TTL: Pago pendiente legítimo (transferencia, efectivo, etc.)
-                    // RAZÓN: Usuario SÍ inició el pago, pero MP demora en confirmar (24-72h)
-                    // Si NO extendemos TTL, orden se eliminaría antes de que MP confirme
-                    // SOLUCIÓN: Extender TTL a 7 días (tiempo máximo que MP espera confirmación)
-                    order.expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 días
-                    console.log(`   ⏰ TTL extendido a 7 días (pago pendiente legítimo)`);
+                    // Extender el vencimiento solo la primera vez que llega un webhook pendiente,
+                    // para no posponer indefinidamente por webhooks repetidos.
+                    if (order.estadoPago !== 'pending') {
+                        order.expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+                    }
                     break;
 
                 case 'rejected':
                 case 'cancelled':
-                    // 🗑️ ELIMINACIÓN AUTOMÁTICA: No actualizar, directamente ELIMINAR orden
-                    // RAZÓN: Orden rechazada/cancelada no sirve para nada, solo ocupa espacio en BD
-                    // El admin NUNCA debería verlas (no tienen valor operativo)
-                    console.log(`🗑️ Eliminando orden ${orderId} (pago ${paymentInfo.status})`);
+                    // Cuando el pago es rechazado o cancelado, la orden se elimina
+                    // porque no tiene valor operativo para el negocio.
+                    logger.info('Eliminando orden por pago rechazado o cancelado', { orderId, status: paymentInfo.status });
                     
-                    // ✅ PRIMERO: Guardar información de pago en OrderEventLog (para auditoría)
-                    // aunque la orden será eliminada
+                    // Registrar en el historial de eventos antes de eliminar
                     await OrderEventLog.create({
                         orderId,
                         evento: 'order_deleted',
@@ -648,7 +582,7 @@ class MercadoPagoService {
 
                 case 'refunded':
                     nuevoEstadoPago = 'refunded';
-                    nuevoEstadoPedido = 'cancelado'; // ✅ Si fue reembolsado, cancelar pedido
+                    nuevoEstadoPedido = 'cancelado';
                     descripcionEvento = `Pago reembolsado - ID: ${paymentId}`;
                     break;
 
@@ -656,20 +590,18 @@ class MercadoPagoService {
                     descripcionEvento = `Estado desconocido: ${paymentInfo.status} - ID: ${paymentId}`;
             }
 
-            // Solo actualizar si el estado cambió
+            // Solo actualizar si el estado realmente cambió
             if (order.estadoPago !== nuevoEstadoPago) {
                 order.estadoPago = nuevoEstadoPago;
-                console.log(`   ✅ Estado pago actualizado: ${order.estadoPago} → ${nuevoEstadoPago}`);
             }
 
             if (order.estadoPedido !== nuevoEstadoPedido) {
                 order.estadoPedido = nuevoEstadoPedido;
-                console.log(`   ✅ Estado pedido actualizado: ${order.estadoPedido} → ${nuevoEstadoPedido}`);
             }
 
             await order.save();
 
-            // ✅ Registrar evento
+            // Registrar el evento en el historial de la orden
             await OrderEventLog.create({
                 orderId: order._id,
                 eventType: 'payment_notification',
@@ -684,7 +616,7 @@ class MercadoPagoService {
                 }
             });
 
-            console.log(`   ✅ Webhook procesado exitosamente`);
+            logger.info('Webhook procesado exitosamente', { orderNumber: order.orderNumber, newStatus: nuevoEstadoPago });
 
             return {
                 processed: true,
@@ -696,11 +628,11 @@ class MercadoPagoService {
             };
 
         } catch (error) {
-            console.error('❌ [MP Webhook] Error procesando notificación:', error);
+            logger.error('Error procesando notificación de webhook', { message: error.message });
             throw error;
         }
     }
 }
 
-// ✅ Exportar instancia única (singleton)
+// Exportar una única instancia compartida por toda la aplicación
 export default new MercadoPagoService();

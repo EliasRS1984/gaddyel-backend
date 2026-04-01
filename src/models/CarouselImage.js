@@ -1,8 +1,26 @@
-import mongoose from "mongoose";
-
-/**
- * Modelo para las imágenes del carrusel de la página de inicio
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * La estructura de las imágenes del carrusel en la base de datos.
+ * Cada imagen del carrusel principal de la página de inicio
+ * se guarda con estos campos.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. Cada imagen tiene una URL (src), un texto alternativo (alt),
+ *    una descripción opcional (caption), un orden de aparición y
+ *    un estado activo/inactivo.
+ * 2. El campo 'publicId' permite eliminar la imagen de Cloudinary
+ *    cuando se borra del panel.
+ * 3. Las imágenes se ordenan por el campo 'orden' de menor a mayor.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿Las imágenes no aparecen en orden? → Verificar el campo 'orden' de cada imagen
+ * - ¿No se pueden borrar imágenes de Cloudinary? → Verificar que 'publicId' esté guardado
+ * - Documentación oficial: https://mongoosejs.com/docs/guide.html
+ * ======================================================
  */
+
+import mongoose from "mongoose";
 const carouselImageSchema = new mongoose.Schema(
   {
     src: { 
@@ -41,7 +59,7 @@ const carouselImageSchema = new mongoose.Schema(
   }
 );
 
-// Índice para ordenar y filtrar activos
+// Índice compuesto: permite buscar rápidamente las imágenes activas ya ordenadas
 carouselImageSchema.index({ activo: 1, orden: 1 });
 
 export const CarouselImage = mongoose.model('CarouselImage', carouselImageSchema);

@@ -1,16 +1,32 @@
-/**
- * ✅ ProductService - Lógica de negocio para productos
- * Separación de concerns: Controllers solo orquestan, Services contienen lógica
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * Lógica de negocio para productos: crear, leer,
+ * actualizar, eliminar y validar stock.
+ * Los controladores usan estas funciones en lugar de
+ * hablar directamente con la base de datos.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. Cada método recibe datos validados del controlador.
+ * 2. Aplica reglas de negocio (precio > 0, stock >= 0, …).
+ * 3. Guarda o consulta en la base de datos y devuelve el resultado.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿Los productos no se listan? → Revisa getAllProducts().
+ * - ¿No se puede crear un producto? → Revisa createProduct()
+ *   y las validaciones de precio y stock.
+ * - ¿El stock no valida? → Revisa validateStock().
+ * ======================================================
  */
 
 import { Producto } from '../models/Product.js';
 import logger from '../utils/logger.js';
 
 class ProductService {
-    /**
-     * ✅ MEJORADO: Obtener todos los productos con paginación y agregación
-     * Evita N+1 queries usando aggregation pipeline de MongoDB
-     */
+
+    // ======== LISTAR PRODUCTOS CON FILTROS Y PÁGINACIÓN ========
+    // Devuelve una página de productos según los filtros recibidos.
+    // Usa aggregation de MongoDB para contar y paginar en una sola pasada.
     async getAllProducts(filters = {}) {
         try {
             const {
@@ -23,15 +39,12 @@ class ProductService {
                 sortDir = -1
             } = filters;
 
-            // ✅ Validar paginación
             const pageNum = Math.max(1, parseInt(page) || 1);
-            const limitNum = Math.min(100, parseInt(limit) || 12); // Máximo 100 items
+            const limitNum = Math.min(100, parseInt(limit) || 12);
             const skip = (pageNum - 1) * limitNum;
 
-            // ✅ Construir pipeline de agregación
             const pipeline = [];
 
-            // Stage 1: Filtrar documentos
             const matchStage = {};
             if (categoria) matchStage.categoria = categoria;
             if (destacado !== undefined) matchStage.destacado = destacado === 'true';
@@ -41,19 +54,21 @@ class ProductService {
                 pipeline.push({ $match: matchStage });
             }
 
-            // Stage 2: Ordenar
+            // Solo se permite ordenar por campos seguros.
+            // Si llega un campo desconocido, se usa 'createdAt' por defecto.
+            const validSortFields = ['precio', 'nombre', 'createdAt', 'destacado', 'categoria'];
+            const safeSortBy = validSortFields.includes(sortBy) ? sortBy : 'createdAt';
+
+            // Ordenar, paginar y seleccionar campos
             const sortObj = {};
-            sortObj[sortBy] = parseInt(sortDir) || -1;
+            sortObj[safeSortBy] = parseInt(sortDir) || -1;
             pipeline.push({ $sort: sortObj });
 
-            // Stage 3: Contar total (antes de paginar)
             const countResult = await Producto.aggregate([
                 ...pipeline,
                 { $count: 'total' }
             ]);
             const total = countResult[0]?.total || 0;
-
-            // Stage 4: Paginar y seleccionar campos
             pipeline.push({ $skip: skip });
             pipeline.push({ $limit: limitNum });
             pipeline.push({
@@ -87,9 +102,7 @@ class ProductService {
         }
     }
 
-    /**
-     * Obtener producto por ID
-     */
+    // ======== OBTENER UN PRODUCTO POR ID ========
     async getProductById(id) {
         try {
             const producto = await Producto.findById(id).lean();
@@ -108,9 +121,8 @@ class ProductService {
         }
     }
 
-    /**
-     * ✅ MEJORADO: Obtener productos destacados con agregación
-     */
+    // ======== OBTENER PRODUCTOS DESTACADOS ========
+    // Devuelve los productos marcados como destacados, del más reciente al más antiguo.
     async getFeaturedProducts(limit = 6) {
         try {
             const pipeline = [
@@ -138,9 +150,8 @@ class ProductService {
         }
     }
 
-    /**
-     * Crear nuevo producto (solo admin)
-     */
+    // ======== CREAR PRODUCTO ========
+    // Valida precio, stock y tamaño de arrays antes de guardar.
     async createProduct(productData) {
         try {
             // Validaciones de lógica de negocio
@@ -186,9 +197,8 @@ class ProductService {
         }
     }
 
-    /**
-     * Actualizar producto (solo admin)
-     */
+    // ======== ACTUALIZAR PRODUCTO ========
+    // Solo actualiza los campos permitidos; ignora el resto.
     async updateProduct(id, updateData) {
         try {
             const producto = await Producto.findById(id);
@@ -235,9 +245,7 @@ class ProductService {
         }
     }
 
-    /**
-     * Eliminar producto (solo admin)
-     */
+    // ======== ELIMINAR PRODUCTO ========
     async deleteProduct(id) {
         try {
             const producto = await Producto.findByIdAndDelete(id);
@@ -256,9 +264,8 @@ class ProductService {
         }
     }
 
-    /**
-     * Validar stock disponible
-     */
+    // ======== VALIDAR STOCK ========
+    // Verifica que haya suficiente stock antes de crear un pedido.
     async validateStock(productId, requiredQuantity) {
         try {
             const producto = await Producto.findById(productId).lean();
@@ -282,20 +289,15 @@ class ProductService {
         }
     }
 
-    /**
-     * ✅ NUEVO: Obtener TODOS los productos sin paginación
-     * Usado por Dashboard para estadísticas
-     * @param {Object} filters - Filtros opcionales (categoria, destacado, etc)
-     * @returns {Promise<Array>} Array con TODOS los productos que coincidan
-     */
+    // ======== TODOS LOS PRODUCTOS SIN PÁGINACIÓN ========
+    // Devuelve todos los productos que coinciden con los filtros,
+    // sin límite de registros. Usado por el dashboard de estadísticas.
     async getAllProductsNoPagination(filters = {}) {
         try {
             const { categoria, destacado, personalizable } = filters;
 
-            // ✅ Construir pipeline de agregación SIN paginación
             const pipeline = [];
 
-            // Stage 1: Filtrar documentos
             const matchStage = {};
             if (categoria) matchStage.categoria = categoria;
             if (destacado !== undefined) matchStage.destacado = destacado === 'true';
@@ -305,10 +307,8 @@ class ProductService {
                 pipeline.push({ $match: matchStage });
             }
 
-            // Stage 2: Ordenar por creación (más recientes primero)
             pipeline.push({ $sort: { createdAt: -1 } });
 
-            // Stage 3: Seleccionar campos necesarios
             pipeline.push({
                 $project: {
                     nombre: 1,
@@ -323,7 +323,6 @@ class ProductService {
                 }
             });
 
-            // ✅ Sin skip ni limit - devuelve TODOS
             const productos = await Producto.aggregate(pipeline);
 
             logger.info(`getAllProductsNoPagination: Retornando ${productos.length} productos`);

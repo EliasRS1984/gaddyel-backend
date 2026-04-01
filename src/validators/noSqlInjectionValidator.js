@@ -1,20 +1,29 @@
-/**
- * Validadores contra NoSQL Injection
- * Previene ataques usando operadores MongoDB maliciosos
- * ✅ SOLUCIÓN: Validación estricta de ObjectIds y campos
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * Funciones que bloquean intentos de inyección NoSQL.
+ * Un atacante podría enviar operadores de MongoDB
+ * (como $ne, $or, $where) para manipular las consultas
+ * a la base de datos. Estas funciones los detectan y rechazan.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. validateObjectId() verifica que un ID sea un ObjectId
+ *    válido de MongoDB antes de usarlo en una consulta.
+ * 2. validateObjectFields() revisa que un objeto no contenga
+ *    operadores MongoDB prohibidos.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿Error 'Operador MongoDB no permitido'? → Alguien envía
+ *   datos maliciosos. Revisar el origen de la solicitud.
+ * - ¿Error 'ObjectId no válido'? → El ID en la URL o en el
+ *   cuerpo de la solicitud tiene formato incorrecto.
+ * ======================================================
  */
 
 import { isValidObjectId } from 'mongoose';
 
-/**
- * Valida que un valor sea ObjectId válido de MongoDB
- * Previene: db.col.find({ _id: { $ne: null } })
- * 
- * @param {string} value - Valor a validar
- * @param {string} fieldName - Nombre del campo (para mensajes de error)
- * @returns {string} Valor validado
- * @throws {Error} Si el valor no es ObjectId válido
- */
+// ======== VALIDAR ID DE MONGODB ========
+// Verifica que el valor sea un ObjectId válido antes de usarlo en una consulta.
 export const validateObjectId = (value, fieldName = 'ID') => {
     if (!value) {
         throw new Error(`${fieldName} es requerido`);
@@ -31,14 +40,8 @@ export const validateObjectId = (value, fieldName = 'ID') => {
     return value;
 };
 
-/**
- * Valida array de ObjectIds
- * 
- * @param {Array} arr - Array de IDs a validar
- * @param {string} fieldName - Nombre del campo
- * @returns {Array} Array de IDs validados
- * @throws {Error} Si algún ID no es válido
- */
+// ======== VALIDAR ARRAY DE IDs ========
+// Verifica que cada elemento del array sea un ObjectId válido.
 export const validateObjectIdArray = (arr, fieldName = 'IDs') => {
     if (!Array.isArray(arr)) {
         throw new Error(`${fieldName} debe ser un array`);
@@ -53,15 +56,9 @@ export const validateObjectIdArray = (arr, fieldName = 'IDs') => {
     });
 };
 
-/**
- * Valida que un objeto solo contenga campos seguros
- * Previene: { nombre: { $set: ... } }
- * 
- * @param {Object} obj - Objeto a validar
- * @param {Array<string>} allowedFields - Campos permitidos
- * @returns {Object} Objeto validado
- * @throws {Error} Si contiene campos no permitidos u operadores MongoDB
- */
+// ======== VALIDAR CAMPOS DE UN OBJETO ========
+// Verifica que el objeto no tenga operadores MongoDB y solo contenga
+// los campos que se esperan.
 export const validateObjectFields = (obj, allowedFields) => {
     if (typeof obj !== 'object' || obj === null) {
         throw new Error('Parámetro debe ser objeto');
@@ -69,8 +66,13 @@ export const validateObjectFields = (obj, allowedFields) => {
 
     const keys = Object.keys(obj);
     
-    // Rechazar operadores MongoDB
-    const mongoOperators = ['$set', '$inc', '$push', '$pull', '$ne', '$eq', '$where', '$regex', '$gt', '$lt'];
+    // Lista completa de operadores MongoDB conocidos como peligrosos.
+    // Cualquier clave en el objeto que coincida con alguno de estos será rechazada.
+    const mongoOperators = [
+        '$set', '$inc', '$push', '$pull', '$ne', '$eq', '$where', '$regex', '$gt', '$lt',
+        '$or', '$and', '$in', '$nin', '$exists', '$text', '$nor', '$not', '$mod',
+        '$all', '$elemMatch', '$size', '$unset', '$rename', '$addToSet', '$pop', '$bit'
+    ];
     for (const key of keys) {
         if (mongoOperators.some(op => key.includes(op))) {
             throw new Error(`Operador MongoDB no permitido: ${key}`);

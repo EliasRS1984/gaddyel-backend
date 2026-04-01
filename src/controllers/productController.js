@@ -1,3 +1,25 @@
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * Controlador de productos. Permite crear, leer, editar
+ * y eliminar productos del catálogo de Gaddyel.
+ * También maneja los productos "destacados" en la página principal.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. El sitio web (y el admin) llaman a los distintos endpoints para leer el catálogo.
+ * 2. Para crear o editar, el admin envía los datos del producto incluyendo el precioBase.
+ * 3. El servidor calcula automáticamente el precio de venta con la tasa de comisión actual.
+ * 4. Los precios siempre se calculan en el servidor — nunca se acepta el precio del cliente.
+ * 5. La paginación evita cargar todos los productos en memoria cuando hay muchos.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿Los productos no cargan? → Revisar obtenerProductos y la query a la base de datos
+ * - ¿El precio se ve incorrecto? → Revisar crearProducto/editarProducto y SystemConfig
+ * - ¿Las imágenes no aparecen? → Verificar que imagenSrc tenga URL válida de Cloudinary
+ * - ¿El toggle de destacado no funciona? → Revisar toggleDestacadoProducto
+ * ======================================================
+ */
+
 import { Producto } from "../models/Product.js";
 import productService from "../services/productService.js";
 import logger from "../utils/logger.js";
@@ -221,7 +243,7 @@ export const crearProducto = async (req, res) => {
         await nuevoProducto.save();
         res.status(201).json(nuevoProducto);
     } catch (error) {
-        console.error("Error al crear el producto:", error);
+        logger.error("Error al crear el producto:", { message: error.message });
         res.status(400).json({ error: error.message || "Error al crear el producto" });
     }
 };
@@ -229,10 +251,11 @@ export const crearProducto = async (req, res) => {
 // Obtener productos destacados
 export const obtenerProductosDestacados = async (req, res) => {
     try {
-        const productosDestacados = await Producto.find({ destacado: true });
+        // ✅ RENDIMIENTO: .lean() devuelve datos en bruto más rápido (operación de solo lectura)
+        const productosDestacados = await Producto.find({ destacado: true }).lean();
         res.json(productosDestacados);
     } catch (error) {
-        console.error("Error al obtener productos destacados:", error);
+        logger.error('Error al obtener productos destacados', { message: error.message });
         res.status(500).json({ error: "Error al obtener productos destacados" });
     }
 };
@@ -336,7 +359,7 @@ export const editarProducto = async (req, res) => {
         if (!actualizado) return res.status(404).json({ error: 'Producto no encontrado' });
         res.json(actualizado);
     } catch (error) {
-        console.error('Error al actualizar producto:', error);
+        logger.error('Error al actualizar producto:', { message: error.message });
         res.status(400).json({ error: error.message || 'Error al actualizar producto' });
     }
 };
@@ -347,7 +370,7 @@ export const eliminarProducto = async (req, res) => {
         await Producto.findByIdAndDelete(req.params.id);
         res.json({ ok: true });
     } catch (error) {
-        console.error('Error al eliminar producto:', error);
+        logger.error('Error al eliminar producto:', { message: error.message });
         res.status(500).json({ error: 'Error al eliminar producto' });
     }
 };
@@ -373,7 +396,7 @@ export const toggleDestacadoProducto = async (req, res) => {
 
         res.json(producto);
     } catch (error) {
-        console.error('Error al actualizar destacado:', error);
+        logger.error('Error al actualizar destacado:', { message: error.message });
         res.status(500).json({ error: 'Error al actualizar destacado' });
     }
 };

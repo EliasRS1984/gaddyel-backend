@@ -1,3 +1,25 @@
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * La estructura de los pedidos en la base de datos.
+ * Cada pedido guarda todo: qué compró, cuánto pagó,
+ * el estado del pago (Mercado Pago) y el estado de producción.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. Cuando el cliente completa el checkout, se crea un pedido aquí.
+ * 2. El pedido empieza en estadoPago='pending' y esperando el webhook de MP.
+ * 3. Cuando Mercado Pago confirma el pago, el webhook actualiza estadoPago='approved'.
+ * 4. El admin luego gestiona el estadoPedido: en_produccion → enviado → entregado.
+ * 5. Los pedidos sin pago se eliminan automáticamente en 2 horas (TTL index).
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿El pedido quedó en 'pending' para siempre? → Verificar que el webhook de MP funcione
+ * - ¿Los pedidos se borran solos? → Revisar el campo 'expiresAt' y el TTL de 2 horas
+ * - ¿Los cálculos de envío son incorrectos? → Revisar 'cantidadProductos' y 'costoEnvio'
+ * - Documentación oficial: https://mongoosejs.com/docs/guide.html
+ * ======================================================
+ */
+
 import mongoose from "mongoose";
 
 const orderSchema = new mongoose.Schema({
@@ -111,12 +133,11 @@ const orderSchema = new mongoose.Schema({
         default: 'en_produccion' // Default para compatibilidad con código existente
     },
     
-    // ═══════════════════════════════════════════════════════════════
-    // CAMPOS LEGACY (DEPRECATED - Mantener solo por compatibilidad)
-    // ═══════════════════════════════════════════════════════════════
-    // ⚠️ NO USAR EN CÓDIGO NUEVO - Migrar a payment.mercadoPago.*
+    // ======== CAMPOS VIEJOS (mantener solo para compatibilidad) ========
+    // ATENCIÓN: No usar estos campos en código nuevo.
+    // Los datos de pago ahora van dentro de 'payment.mercadoPago.*'
     
-    // @deprecated Usar payment.mercadoPago.preferenceId
+    // Campo viejo: reemplazado por payment.mercadoPago.preferenceId
     mercadoPagoId: {
         type: String,
         unique: true,
@@ -125,7 +146,7 @@ const orderSchema = new mongoose.Schema({
         select: false // No incluir en queries por defecto
     },
     
-    // @deprecated Usar payment.mercadoPago.paymentId
+    // Campo viejo: reemplazado por payment.mercadoPago.paymentId
     mercadoPagoPaymentId: {
         type: String,
         sparse: true,
@@ -133,7 +154,7 @@ const orderSchema = new mongoose.Schema({
         select: false
     },
     
-    // @deprecated Usar payment.mercadoPago.initPoint
+    // Campo viejo: reemplazado por payment.mercadoPago.initPoint
     mercadoPagoCheckoutUrl: {
         type: String,
         select: false
@@ -153,11 +174,10 @@ const orderSchema = new mongoose.Schema({
             sandboxInitPoint: String,
             
             // Información del pago
-            // NOTA: Índice declarado explícitamente en línea 407 (sparse: true)
+            // NOTA: Índice declarado únicamente en orderSchema.index() más abajo (con sparse: true)
+            // No usar sparse: true aquí para evitar el warning de índice duplicado en Mongoose 8
             paymentId: {
-                type: String,
-                sparse: true
-                // index: true removido para evitar duplicado (ver orderSchema.index línea 407)
+                type: String
             },
             status: {
                 type: String,
@@ -267,17 +287,6 @@ const orderSchema = new mongoose.Schema({
         default: null
     },
     
-    // Dirección de entrega
-    direccionEntrega: {
-        calle: String,
-        numero: String,
-        piso: String,
-        ciudad: String,
-        codigoPostal: String,
-        provincia: String,
-        completa: String
-    },
-    
     // Fechas importantes
     fechaCreacion: {
         type: Date,
@@ -343,15 +352,29 @@ const orderSchema = new mongoose.Schema({
         default: ''
     },
     
-    // Datos del comprador (guardados en la orden para historial)
+    // ═══════════════════════════════════════════════════════════════
+    // DATOS DEL COMPRADOR — COPIA INTENCIONAL PARA HISTORIAL
+    // ═══════════════════════════════════════════════════════════════
+    // Por qué se copian aquí y no se lee de Client:
+    //   • Si el cliente actualiza su dirección después de comprar, el
+    //     pedido original debe conservar la dirección QUE TENÍA al momento.
+    //   • Si el cliente se da de baja, el pedido sigue siendo válido
+    //     (facturación, envíos pasados, historial contable).
+    //   • Es una práctica estándar de e-commerce: el pedido es un
+    //     documento inmutable que refleja el estado en el momento de la compra.
+    //
+    // IMPORTANTE PARA PRIVACIDAD:
+    //   Eliminar un cliente NO borra estos datos de las órdenes existentes.
+    //   Si en el futuro se requiere cumplimiento GDPR/protección de datos,
+    //   habrá que implementar anonimización de pedidos al borrar un cliente.
     datosComprador: {
         nombre: String,
         email: String,
         whatsapp: String,
         telefono: String,
         cuit: String,
-        direccion: String,
-        ciudad: String,
+        domicilio: String,   // calle y número (antes "direccion")
+        localidad: String,   // ciudad o localidad (antes "ciudad")
         provincia: String,
         codigoPostal: String,
         notasAdicionales: String
@@ -406,11 +429,11 @@ orderSchema.index({ estadoPago: 1, createdAt: -1 }); // Filtrado por estado de p
 orderSchema.index({ estadoPedido: 1, createdAt: -1 }); // Filtrado por estado de producción
 orderSchema.index({ 'datosComprador.email': 1 }); // Búsqueda rápida por email del comprador
 orderSchema.index({ 'payment.mercadoPago.paymentId': 1 }, { sparse: true }); // Búsqueda por payment ID de webhook
+// ✅ O2: Índices adicionales para casos de uso frecuentes
+orderSchema.index({ fechaPago: 1 }); // Reportes de ingresos por fecha de pago
+orderSchema.index({ estadoPago: 1, estadoPedido: 1 }); // Filtros combinados en el panel admin (ej: aprobados en producción)
 
-/**
- * Middleware: Calcular fecha de envío estimada antes de guardar
- * Se ejecuta cuando se crea una nueva orden
- */
+// Antes de guardar: calcula la fecha estimada de envío si no fue definida
 orderSchema.pre('save', function(next) {
     // Solo calcular si es nuevo documento y no tiene fecha estimada
     if (this.isNew && !this.fechaEnvioEstimada) {
@@ -426,9 +449,8 @@ orderSchema.pre('save', function(next) {
     next();
 });
 
-/**
- * Método de instancia: Obtener días restantes hasta envío
- */
+// Devuelve cuántos días faltan para la fecha estimada de envío.
+// Si ya pasó la fecha, devuelve 0 (no devuelve números negativos).
 orderSchema.methods.getDiasRestantesEnvio = function() {
     if (!this.fechaEnvioEstimada) return null;
     
@@ -439,9 +461,7 @@ orderSchema.methods.getDiasRestantesEnvio = function() {
     return Math.max(0, diasRestantes); // No devolver negativos
 };
 
-/**
- * Método de instancia: Verificar si el pedido está retrasado
- */
+// Devuelve true si el pedido pasó su fecha estimada de envío y todavía no fue despachado.
 orderSchema.methods.isRetrasado = function() {
     if (!this.fechaEnvioEstimada || this.fechaEnvioReal) return false;
     

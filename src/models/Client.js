@@ -1,3 +1,25 @@
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * La estructura de los clientes en la base de datos.
+ * Guarda todos los datos de cada persona que hace un pedido:
+ * datos de contacto, dirección de envío, historial de compras
+ * y control de seguridad para el login.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. Cuando un cliente hace su primera compra, se crea un registro aquí.
+ * 2. La contraseña (si la tiene) se encripta automáticamente antes de guardarse.
+ * 3. Después de 5 intentos de login fallidos, la cuenta se bloquea 2 horas.
+ * 4. El historial de pedidos guarda referencias a las órdenes del cliente.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿No se puede loguear un cliente? → Verificar 'loginAttempts' y 'lockUntil'
+ * - ¿La dirección no se guarda? → Los campos son 'domicilio', 'localidad', 'provincia', 'codigoPostal'
+ * - ¿La contraseña no funciona? → Revisar el método 'comparePassword'
+ * - Documentación oficial: https://mongoosejs.com/docs/guide.html
+ * ======================================================
+ */
+
 import mongoose from "mongoose";
 import bcrypt from 'bcryptjs';
 
@@ -31,7 +53,7 @@ const clientSchema = new mongoose.Schema({
         match: /^(\+?\d{1,3})?[\d\s\-()]{9,}$/
     },
     
-    // ✅ Dirección predeterminada (nivel superior para acceso rápido)
+    // Dirección de envío — se completa cuando el cliente realiza su primera compra
     domicilio: {
         type: String,
         trim: true,
@@ -57,19 +79,7 @@ const clientSchema = new mongoose.Schema({
         default: ''
     },
     
-    // Direcciones de envío (array principal - sin duplicación)
-    direcciones: [
-        {
-            domicilio: { type: String, trim: true, maxlength: 200 },
-            localidad: { type: String, trim: true, maxlength: 100 },
-            provincia: { type: String, trim: true, maxlength: 100 },
-            codigoPostal: { type: String, trim: true, maxlength: 10 },
-            predeterminada: { type: Boolean, default: false },
-            etiqueta: { type: String, trim: true, maxlength: 50 } // ej: Principal, Casa, Trabajo
-        }
-    ],
-    
-    // ✅ Control de intentos de login
+    // Control de intentos de login fallidos
     loginAttempts: { type: Number, default: 0 },
     lockUntil: Date,
     
@@ -114,7 +124,7 @@ const clientSchema = new mongoose.Schema({
     ultimoLogin: Date
 }, { timestamps: true });
 
-// ✅ Pre-save hook para hashear contraseña
+// Antes de guardar: encripta la contraseña si fue modificada
 clientSchema.pre('save', async function(next) {
     // Actualizar ultimaActividad
     this.ultimaActividad = Date.now();
@@ -134,7 +144,8 @@ clientSchema.pre('save', async function(next) {
     }
 });
 
-// ✅ Método para comparar contraseña
+// Compara una contraseña ingresada con la contraseña encriptada guardada.
+// Se usa al hacer login para verificar que sea correcta.
 clientSchema.methods.comparePassword = async function(candidatePassword) {
     if (!this.password) {
         return false;
@@ -142,12 +153,12 @@ clientSchema.methods.comparePassword = async function(candidatePassword) {
     return bcrypt.compare(candidatePassword, this.password);
 };
 
-// ✅ Verificar si cuenta está bloqueada
+// Devuelve true si la cuenta está bloqueada por demasiados intentos fallidos
 clientSchema.methods.isLocked = function() {
     return this.lockUntil && this.lockUntil > Date.now();
 };
 
-// ✅ Incrementar intentos fallidos
+// Registra un intento de login fallido. Después de 5 intentos, bloquea la cuenta por 2 horas.
 clientSchema.methods.incLoginAttempts = async function() {
     // Reset después de 2 horas
     if (this.lockUntil && this.lockUntil < Date.now()) {
@@ -167,7 +178,7 @@ clientSchema.methods.incLoginAttempts = async function() {
     return this.updateOne(updates);
 };
 
-// ✅ Reset de intentos fallidos
+// Limpia el contador de intentos fallidos cuando el login fue exitoso
 clientSchema.methods.resetLoginAttempts = async function() {
     return this.updateOne({
         $set: { loginAttempts: 0, ultimoLogin: new Date() },
@@ -175,8 +186,8 @@ clientSchema.methods.resetLoginAttempts = async function() {
     });
 };
 
-// ✅ Índice compuesto para búsquedas comunes
+// Índices para acelerar búsquedas frecuentes
 clientSchema.index({ email: 1, activo: 1 });
-clientSchema.index({ fechaCreacion: -1 }); // Para reportes
+clientSchema.index({ fechaCreacion: -1 }); // Para reportes de nuevos clientes
 
 export default mongoose.model('Client', clientSchema);

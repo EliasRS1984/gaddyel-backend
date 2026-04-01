@@ -1,9 +1,24 @@
-import mongoose from 'mongoose';
-
-/**
- * ✅ ORDER EVENT LOG - Auditoría de cambios en órdenes
- * Registra todos los eventos importantes relacionados con pagos y cambios de estado
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * El registro histórico de eventos de cada pedido.
+ * Cada vez que algo importante ocurre en un pedido
+ * (pago aprobado, webhook recibido, cambio de estado),
+ * se guarda un registro aquí para poder auditar qué pasó y cuándo.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. Cualquier parte del sistema puede crear un evento con 'OrderEventLog.create(...)'.
+ * 2. Cada evento tiene un tipo (pago aprobado, error, etc.) y una descripción.
+ * 3. El campo 'metadata' permite guardar información variable según el tipo de evento.
+ * 4. Estos registros son de solo lectura — nunca se modifican, solo se crean.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿No aparecen eventos de un pedido? → Verificar que se esté guardando correctamente en el servicio
+ * - ¿Los eventos llegan desordenados? → Ordenar por 'timestamp' descendente al consultar
+ * ======================================================
  */
+
+import mongoose from 'mongoose';
 
 const OrderEventLogSchema = new mongoose.Schema({
     orderId: {
@@ -79,7 +94,7 @@ const OrderEventLogSchema = new mongoose.Schema({
     timestamps: true 
 });
 
-// Índices para consultas rápidas
+// Índices para consultar el historial de un pedido rápidamente
 OrderEventLogSchema.index({ orderId: 1, timestamp: -1 });
 OrderEventLogSchema.index({ eventType: 1, timestamp: -1 });
 OrderEventLogSchema.index({ timestamp: -1 });

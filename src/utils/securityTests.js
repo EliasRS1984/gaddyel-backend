@@ -1,8 +1,23 @@
-/**
- * ✅ SUITE DE PRUEBAS DE SEGURIDAD - GADDYEL BACKEND
- * 
- * Uso: node securityTests.js
- * Valida que todas las defensas de seguridad estén funcionando
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * Script de pruebas de seguridad que se ejecuta manualmente
+ * desde la terminal para verificar que los módulos de defensa
+ * del servidor estén funcionando correctamente.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. Se ejecuta con: node securityTests.js
+ * 2. Prueba validación de IDs de MongoDB, firmas de Cloudinary,
+ *    hash de contraseñas, configuración de JWT e índices de base de datos.
+ * 3. Imprime en consola cuántas pruebas pasaron y cuántas fallaron.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿Prueba 1 falla? → Revisa noSqlInjectionValidator.js
+ * - ¿Prueba 2 falla? → Revisa config/cloudinarySignature.js
+ * - ¿Prueba 3 falla? → Verifica que bcryptjs esté instalado
+ * - ¿Prueba 4 falla? → Verifica las variables JWT_ACCESS_SECRET
+ *   y JWT_REFRESH_SECRET en el archivo .env
+ * ======================================================
  */
 
 import crypto from 'crypto';

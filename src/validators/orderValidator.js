@@ -1,9 +1,28 @@
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * Reglas de validación para datos de pedidos.
+ * Se verifican antes de crear o actualizar un pedido.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. createOrderSchema valida que el carrito y los datos
+ *    del cliente estén completos y bien formados.
+ * 2. updateOrderStatusSchema valida que el admin solo pueda
+ *    pasar el pedido a estados permitidos.
+ * 3. filterOrdersSchema valida los filtros del panel admin.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿Error al crear pedido con datos válidos? → Revisar
+ *   createOrderSchema, especialmente los campos de dirección.
+ * - ¿El admin no puede cambiar el estado? → Revisar los
+ *   valores permitidos en updateOrderStatusSchema.
+ * ======================================================
+ */
+
 import Joi from 'joi';
 
-/**
- * Validación para creación de orden
- * El frontend envía: items (con id y cantidad), datos del cliente
- */
+// ======== CREAR PEDIDO (DESDE EL FRONTEND) ========
+// El cliente envía su carrito y sus datos de contacto y envío.
 export const createOrderSchema = Joi.object({
     items: Joi.array()
         .items(
@@ -46,25 +65,25 @@ export const createOrderSchema = Joi.object({
                 'any.required': 'El WhatsApp es obligatorio'
             }),
         
-        direccion: Joi.string()
+        domicilio: Joi.string()
             .trim()
             .min(10)
             .max(200)
             .required()
             .messages({ 
-                'string.min': 'Dirección mínimo 10 caracteres',
-                'string.max': 'Dirección máximo 200 caracteres',
-                'any.required': 'La dirección es obligatoria'
+                'string.min': 'Domicilio mínimo 10 caracteres',
+                'string.max': 'Domicilio máximo 200 caracteres',
+                'any.required': 'El domicilio es obligatorio'
             }),
         
-        ciudad: Joi.string()
+        localidad: Joi.string()
             .trim()
             .min(2)
             .max(100)
             .required()
             .messages({ 
-                'string.min': 'Ciudad mínimo 2 caracteres',
-                'any.required': 'La ciudad es obligatoria'
+                'string.min': 'Localidad mínimo 2 caracteres',
+                'any.required': 'La localidad es obligatoria'
             }),
         
         codigoPostal: Joi.string()
@@ -84,13 +103,16 @@ export const createOrderSchema = Joi.object({
     }).required()
 });
 
-/**
- * Validación para actualizar estado del pedido (admin)
- */
+// ======== ACTUALIZAR ESTADO DEL PEDIDO (ADMIN) ========
+// El admin solo puede cambiar el estadoPedido.
+// El estadoPago lo actualiza exclusivamente el webhook de Mercado Pago.
 export const updateOrderStatusSchema = Joi.object({
     estadoPedido: Joi.string()
-        .valid('pendiente', 'en_produccion', 'listo', 'enviado', 'entregado', 'cancelado')
-        .required(),
+        .valid('en_produccion', 'enviado', 'entregado')
+        .required()
+        .messages({
+            'any.only': 'estadoPedido debe ser: en_produccion, enviado o entregado'
+        }),
     
     notasInternas: Joi.string()
         .max(500)
@@ -101,15 +123,14 @@ export const updateOrderStatusSchema = Joi.object({
         .allow(null)
 }).unknown(false);
 
-/**
- * Validación para filtrar órdenes (admin)
- */
+// ======== FILTROS DE BÚSQL DE PEDIDOS (ADMIN) ========
+// Los valores de estado están sincronizados con el modelo Order.js.
 export const filterOrdersSchema = Joi.object({
     estadoPago: Joi.string()
-        .valid('pending', 'approved', 'rejected', 'cancelled'),
+        .valid('pending', 'approved', 'rejected', 'cancelled', 'expired', 'refunded'),
     
     estadoPedido: Joi.string()
-        .valid('pendiente', 'en_produccion', 'listo', 'enviado', 'entregado', 'cancelado'),
+        .valid('en_produccion', 'enviado', 'entregado'),
     
     clienteId: Joi.string()
         .regex(/^[0-9a-fA-F]{24}$/),

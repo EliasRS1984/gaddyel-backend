@@ -1,19 +1,26 @@
-/**
- * Controller: PaymentConfig
- * 
- * PROPÓSITO:
- * - Gestionar configuración global de comisiones
- * - Actualizar tasas y recalcular productos masivamente
- * - Proveer historial de cambios para auditoría
- * 
- * ENDPOINTS:
- * - GET /api/payment-config - Obtener configuración actual
- * - PUT /api/payment-config - Actualizar tasa y recalcular productos
- * - GET /api/payment-config/historial - Ver cambios históricos
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * Controlador de configuración de comisiones de Mercado Pago.
+ * Permite al administrador ajustar la tasa de comisión que se aplica
+ * a los productos, y cuando cambia, recalcula todos los precios de venta.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. El admin consulta la configuración actual (tasa, comisión fija, estrategia).
+ * 2. Si el admin cambia la tasa, se recalculan TODOS los precios en un solo paso (bulkWrite).
+ * 3. El cambio queda registrado en un historial con fecha y cantidad de productos afectados.
+ * 4. También existe un endpoint para hacer un "preview" del precio resultante sin guardar.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿Los precios no se actualizaron? → Revisar actualizarConfiguracion (buscar error en logs)
+ * - ¿El historial está vacío? → Revisar obtenerHistorial
+ * - ¿El preview calcula mal? → Revisar calcularPreview (fórmula: precioBase / (1 - tasa))
+ * ======================================================
  */
 
 import PaymentConfig from '../models/PaymentConfig.js';
 import { Producto } from '../models/Product.js';
+import logger from '../utils/logger.js';
 
 /**
  * GET /api/payment-config
@@ -34,11 +41,10 @@ export const obtenerConfiguracion = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error obteniendo configuración:', error);
+    logger.error('Error obteniendo configuración de pagos', { message: error.message });
     res.status(500).json({
       success: false,
-      message: 'Error al obtener configuración de pagos',
-      error: error.message
+      message: 'Error al obtener configuración de pagos'
     });
   }
 };
@@ -92,24 +98,40 @@ export const actualizarConfiguracion = async (req, res) => {
     // Actualizar configuración
     Object.assign(config, updates);
 
-    // PASO CRÍTICO: Recalcular todos los productos
+    // PASO CRÍTICO: Recalcular todos los productos con la nueva tasa
     let productosActualizados = 0;
     
     if (tasaComision !== undefined && tasaComision !== tasaAnterior) {
-      console.log(`🔄 Recalculando precios con nueva tasa: ${tasaComision * 100}%`);
+      logger.info('Recalculando precios por cambio de tasa de comisión');
       
-      const productos = await Producto.find({});
+      // ✅ RENDIMIENTO (C1): Carga solo los productos con precioBase válido UNA sola vez
+      // y arma una única operación masiva (bulkWrite) en lugar de N saves individuales.
+      // Antes: 1 query + N saves = N+1 operaciones de base de datos.
+      // Ahora: 1 query + 1 bulkWrite = 2 operaciones de base de datos.
+      // El filtro $gt: 0 evita pisar con precio $0 los productos sin precioBase definido.
+      const productos = await Producto.find({
+        precioBase: { $exists: true, $gt: 0 }
+      }).lean();
       
-      for (const producto of productos) {
-        // Calcular nuevo precio de venta usando precioBase
-        const nuevoPrecioVenta = config.calcularPrecioVenta(producto.precioBase);
-        
-        producto.precio = nuevoPrecioVenta;
-        producto.tasaComisionAplicada = tasaComision;
-        producto.fechaActualizacionPrecio = new Date();
-        
-        await producto.save();
-        productosActualizados++;
+      if (productos.length > 0) {
+        const ahora = new Date();
+        // calcularPrecioVenta de PaymentConfig devuelve un número directamente (Math.round a 2 decimales)
+        // Se usa el mismo formato que ya tenía este controlador
+        const operaciones = productos.map(producto => ({
+          updateOne: {
+            filter: { _id: producto._id },
+            update: {
+              $set: {
+                precio: config.calcularPrecioVenta(producto.precioBase),
+                tasaComisionAplicada: tasaComision,
+                fechaActualizacionPrecio: ahora
+              }
+            }
+          }
+        }));
+
+        const resultado = await Producto.bulkWrite(operaciones, { ordered: false });
+        productosActualizados = resultado.modifiedCount;
       }
 
       // Guardar en historial
@@ -146,11 +168,10 @@ export const actualizarConfiguracion = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error actualizando configuración:', error);
+    logger.error('Error actualizando configuración de pagos', { message: error.message });
     res.status(500).json({
       success: false,
-      message: 'Error al actualizar configuración',
-      error: error.message
+      message: 'Error al actualizar configuración'
     });
   }
 };
@@ -165,14 +186,13 @@ export const obtenerHistorial = async (req, res) => {
     
     res.status(200).json({
       success: true,
-      data: config.historial.reverse() // Más recientes primero
+      data: config.historial.reverse()
     });
   } catch (error) {
-    console.error('Error obteniendo historial:', error);
+    logger.error('Error obteniendo historial de configuración de pagos', { message: error.message });
     res.status(500).json({
       success: false,
-      message: 'Error al obtener historial',
-      error: error.message
+      message: 'Error al obtener historial'
     });
   }
 };
@@ -194,11 +214,9 @@ export const calcularPreview = async (req, res) => {
 
     const config = await PaymentConfig.obtenerConfigActual();
     
-    // Usar tasa proporcionada o la actual
     const tasa = tasaComision !== undefined ? tasaComision : config.tasaComision;
     const comisionFija = config.comisionFija;
 
-    // Calcular precio de venta
     const precioVenta = (precioBase + comisionFija) / (1 - tasa);
     const recargo = precioVenta - precioBase;
     const porcentajeRecargo = (recargo / precioBase) * 100;
@@ -216,11 +234,10 @@ export const calcularPreview = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error calculando preview:', error);
+    logger.error('Error calculando preview de precio', { message: error.message });
     res.status(500).json({
       success: false,
-      message: 'Error al calcular preview',
-      error: error.message
+      message: 'Error al calcular preview'
     });
   }
 };

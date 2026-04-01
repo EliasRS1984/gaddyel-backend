@@ -1,3 +1,19 @@
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * Las rutas de pedidos. Algunas son públicas (crear pedido, ver pedidos propios)
+ * y otras son solo para admins (listar todo, cambiar estado, eliminar).
+ *
+ * ¿CÓMO FUNCIONA?
+ * El router aplica autenticación a partir de la línea router.use(verifyToken).
+ * Las rutas declaradas antes de esa línea son públicas.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿No se crea el pedido? → Revisar createOrder en orderController
+ * - ¿El estado no cambia? → Revisar updateOrderStatus en orderController
+ * ======================================================
+ */
+
 import express from 'express';
 import {
     createOrder,
@@ -10,55 +26,45 @@ import {
 } from '../controllers/orderController.js';
 import verifyToken from '../middleware/authMiddleware.js';
 import { createOrderLimiter, searchLimiter } from '../middleware/rateLimiters.js';
+import logger from '../utils/logger.js';
 
 const router = express.Router();
 
-/**
- * POST /api/pedidos/crear - Crear nuevo pedido (público)
- * NO requiere autenticación
- * ✅ PROTEGIDO: Rate limiting (10 pedidos/15min por IP)
- */
+// ======== VERIFICACIÓN DE ROL (solo para la sección admin) ========
+// Se aplica DESPUÉS de verifyToken, únicamente a las rutas que siguen.
+// Las rutas públicas declaradas arriba no se ven afectadas.
+const soloAdmin = (req, res, next) => {
+    if (!req.user || req.user.rol !== 'admin') {
+        logger.security('Intento de acceso a gestión de pedidos sin rol admin', { userId: req.user?.id });
+        return res.status(403).json({ error: 'Solo administradores pueden acceder a esta sección' });
+    }
+    next();
+};
+
+// Crear nuevo pedido (público, con rate limiting)
 router.post('/crear', createOrderLimiter, createOrder);
 
-/**
- * GET /api/pedidos/cliente/:clienteId - Obtener pedidos de un cliente (público)
- * El cliente ve solo sus propios pedidos
- * ✅ PROTEGIDO: Rate limiting (30 búsquedas/15min por IP)
- */
+// Ver pedidos de un cliente específico por su ID (público, con rate limiting)
 router.get('/cliente/:clienteId', searchLimiter, getClientOrders);
 
-// Rutas protegidas (admin)
+// A partir de aquí: solo admins autenticados
 router.use(verifyToken);
+router.use(soloAdmin);
 
-/**
- * ✅ NUEVO: GET /api/pedidos/all - Listar TODAS las órdenes sin paginación
- * Usado por Dashboard para estadísticas
- * IMPORTANTE: Debe ir antes de GET /api/pedidos/:id para evitar conflicto de rutas
- */
+// Listar todas las órdenes sin paginación (para el dashboard de estadísticas)
+// IMPORTANTE: debe ir antes de GET /:id para evitar conflicto de rutas
 router.get('/all', getOrdersNoPagination);
 
-/**
- * GET /api/pedidos - Listar todos los pedidos (admin)
- * Query params: estadoPago, estadoPedido, fechaDesde, fechaHasta, pagina, limite
- */
+// Listar pedidos con filtros y paginación (panel admin)
 router.get('/', getOrders);
 
-/**
- * GET /api/pedidos/:id - Obtener un pedido por ID (admin)
- */
+// Ver detalle de un pedido por ID
 router.get('/:id', getOrderById);
 
-/**
- * PUT /api/pedidos/:id/estado - Actualizar estado del pedido (admin)
- * Body: { estadoPedido, notasAdmin, fechaEntregaEstimada }
- */
+// Actualizar estado del pedido (en_produccion, enviado, entregado)
 router.put('/:id/estado', updateOrderStatus);
 
-/**
- * DELETE /api/pedidos/:id - Eliminar un pedido (admin - requiere contraseña)
- * Body: { password }
- * Registra la eliminación en el historial de estados
- */
+// Eliminar un pedido (requiere confirmación con contraseña del admin)
 router.delete('/:id', deleteOrder);
 
 export default router;

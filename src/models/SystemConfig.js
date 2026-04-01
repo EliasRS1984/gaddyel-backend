@@ -1,16 +1,22 @@
-/**
- * Modelo: SystemConfig
- * 
- * PROPÓSITO:
- * - Configuración global centralizada del sistema
- * - Evitar hardcodear valores en código
- * - Permitir actualización sin redeploy
- * 
- * ALCANCE:
- * - Envío: Costos, cantidad para envío gratis
- * - Pagos: Comisiones de pasarelas
- * - Productos: Límites, reglas de negocio
- * - General: Configuraciones varias
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * La configuración global del sistema guardada en la base de datos.
+ * Centraliza todos los parámetros ajustables: costos de envío,
+ * tasas de comisión y límites de productos.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. Existe un único documento de configuración (patrón singleton).
+ * 2. El admin puede cambiar valores desde el panel sin tocar el servidor.
+ * 3. Al cambiar la tasa de comisión, el controlador llama a 'calcularPrecioVenta'
+ *    para recalcular todos los productos.
+ * 4. Cada cambio queda registrado en 'historial' para auditoría.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿El envío gratis no aplica? → Revisar 'habilitarEnvioGratis' y 'cantidadParaEnvioGratis'
+ * - ¿El precio calculado es incorrecto? → Revisar el método 'calcularPrecioVenta'
+ * - Fórmula de precio: (precioBase + comisiónFija) / (1 - tasa), redondeado a la centena
+ * ======================================================
  */
 
 import mongoose from 'mongoose';
@@ -107,7 +113,7 @@ const systemConfigSchema = new mongoose.Schema({
 
   actualizadoPor: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'AdminUser'
+    ref: 'Admin'  // ✅ CORREGIDO M2: el modelo se llama 'Admin', no 'AdminUser'
   },
 
   // Historial de cambios (últimos 10)
@@ -116,19 +122,15 @@ const systemConfigSchema = new mongoose.Schema({
     valorAnterior: mongoose.Schema.Types.Mixed,
     valorNuevo: mongoose.Schema.Types.Mixed,
     fecha: { type: Date, default: Date.now },
-    usuario: { type: mongoose.Schema.Types.ObjectId, ref: 'AdminUser' }
+    usuario: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' }  // ✅ CORREGIDO M2
   }]
 }, {
   timestamps: true
 });
 
-// ============================================
-// MÉTODOS ESTÁTICOS
-// ============================================
+// ======== MÉTODOS ESTÁTICOS ========
 
-/**
- * Obtener configuración actual del sistema
- */
+// Devuelve la configuración activa. Si no existe, la crea con valores por defecto.
 systemConfigSchema.statics.obtenerConfigActual = async function() {
   let config = await this.findOne({ configKey: 'system_default' });
   
@@ -158,13 +160,10 @@ systemConfigSchema.statics.obtenerConfigActual = async function() {
   return config;
 };
 
-// ============================================
-// MÉTODOS DE INSTANCIA - CÁLCULOS
-// ============================================
+// ======== MÉTODOS DE INSTANCIA ========
 
-/**
- * Calcular costo de envío según cantidad de productos
- */
+// Calcula el costo de envío según la cantidad de productos en el carrito.
+// Si la cantidad supera el umbral, el envío es gratis.
 systemConfigSchema.methods.calcularEnvio = function(cantidadProductos) {
   if (!this.envio.habilitarEnvioGratis) {
     return this.envio.costoBase;
@@ -175,22 +174,9 @@ systemConfigSchema.methods.calcularEnvio = function(cantidadProductos) {
     : this.envio.costoBase;
 };
 
-/**
- * Calcular precio de venta a partir de precio base (con comisión MP)
- * 
- * REDONDEO COMERCIAL INTELIGENTE:
- * 1. Calcula precio exacto con comisión
- * 2. Redondea a la CENTENA más cercana hacia arriba
- * 3. Retorna objeto con datos completos para auditoría
- * 
- * @returns {Object} {
- *   precioVenta: number,          // Precio final redondeado
- *   precioExacto: number,          // Precio antes del redondeo
- *   ajusteRedondeo: number,        // Diferencia por redondeo
- *   montoComision: number,         // Comisión total aplicada
- *   tasaAplicada: number           // Tasa utilizada
- * }
- */
+// Calcula el precio de venta a partir del precio base aplicando la comisión de MP.
+// Redondea hacia arriba a la centena más cercana para evitar precios con decimales.
+// Devuelve el precio final + datos de auditoría contable.
 systemConfigSchema.methods.calcularPrecioVenta = function(precioBase) {
   const r = this.comisiones.mercadoPago.tasaComision;
   const f = this.comisiones.mercadoPago.comisionFija;
@@ -214,12 +200,8 @@ systemConfigSchema.methods.calcularPrecioVenta = function(precioBase) {
   };
 };
 
-/**
- * Calcular precio base a partir de precio de venta (reversa)
- * Fórmula inversa: PrecioBase = PrecioVenta * (1 - r) - f
- * 
- * Redondea a centena hacia arriba para mantener consistencia
- */
+// Calcula el precio base a partir del precio de venta publicado (operación inversa).
+// Fórmula: PrecioBase = PrecioVenta * (1 - tasa) - comisiónFija
 systemConfigSchema.methods.calcularPrecioBase = function(precioVenta) {
   const r = this.comisiones.mercadoPago.tasaComision;
   const f = this.comisiones.mercadoPago.comisionFija;
@@ -231,27 +213,11 @@ systemConfigSchema.methods.calcularPrecioBase = function(precioVenta) {
   return Math.ceil(precioBase / 100) * 100;
 };
 
-/**
- * 🧾 AUDITORÍA: Calcular desglose contable para órdenes
- * 
- * ESTRUCTURA DEL DESGLOSE:
- * 1. precioBasePorItem: Precio base real de items (sin recargo MP)
- * 2. costoEnvio: Precio de envío (YA incluye recargo MP incorporado)
- * 3. ajusteRedondeoTotal: Ganancia adicional por redondeo comercial
- * 4. comisionMercadoPago: Comisión que cobra MP sobre el total
- * 
- * NOTA IMPORTANTE:
- * El precio de envío es un valor general que YA TIENE el recargo de MP incorporado.
- * Es un precio basado en el costo promedio de envíos, no se calcula individualmente.
- * 
- * Fórmula: Total = precioBasePorItem + costoEnvio + ajusteRedondeo
- * Neto en Caja = Total - comisionMercadoPago
- * 
- * @param {Number} totalFinal - Precio total final (lo que paga el cliente)
- * @param {Array} items - Items con { precioUnitario, cantidad }
- * @param {Number} costoEnvio - Costo de envío (ya con recargo MP incorporado)
- * @returns {Object} { precioBasePorItem, comisionMercadoPago, ajusteRedondeoTotal, costoEnvio }
- */
+// Calcula el desglose contable de una orden para auditoría.
+// Recibe el total cobrado al cliente, los items y el costo de envío.
+// Devuelve: precioBasePorItem, comisiónMercadoPago, ajusteRedondeo y costoEnvío.
+// Fórmula: Total = precioBasePorItem + costoEnvio + ajusteRedondeo
+// Neto en Caja = Total - comisionMercadoPago
 systemConfigSchema.methods.calcularDesgloceOrden = function(totalFinal, items, costoEnvio = 0) {
   const r = this.comisiones.mercadoPago.tasaComision;
   

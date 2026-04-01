@@ -1,15 +1,33 @@
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * Las rutas de autenticación para clientes de la tienda.
+ * Maneja registro, login, consulta y actualización de perfil.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. /registro: Crea una cuenta nueva de cliente.
+ * 2. /login: Verifica credenciales y devuelve un token JWT.
+ * 3. /perfil (GET): Devuelve los datos del cliente autenticado.
+ * 4. /perfil (PUT): Actualiza nombre y whatsapp del cliente.
+ * 5. /direccion: Actualiza la dirección de envío del cliente.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿El registro falla? → Revisar las validaciones al inicio de cada ruta
+ * - ¿El token no funciona? → Verificar JWT_SECRET o JWT_ACCESS_SECRET en variables de entorno
+ * - ¿La dirección no se guarda? → Los campos son 'domicilio', 'localidad', 'provincia', 'codigoPostal'
+ * ======================================================
+ */
+
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import logger from '../utils/logger.js';
 import Client from '../models/Client.js';
 
 const router = express.Router();
 
-/**
- * ✅ POST /api/auth/registro - Registro de nuevo cliente
- * OPTIMIZADO 2026: Validaciones robustas de seguridad
- * Body: { nombre, email, password, whatsapp }
- */
+// ======== REGISTRO DE CLIENTE ========
+// Crea una cuenta nueva validando todos los campos antes de guardar.
 router.post('/registro', async (req, res) => {
     try {
         const { nombre, email, password, whatsapp } = req.body;
@@ -92,7 +110,7 @@ router.post('/registro', async (req, res) => {
         // ✅ VALIDACIÓN 6: Verificar email duplicado
         const clienteExistente = await Client.findOne({ email: emailLower });
         if (clienteExistente) {
-            console.log(`⚠️ Intento de registro con email existente: ${emailLower}`);
+            // ✅ SEGURIDAD (C6): No se logea el email para evitar exposición de datos personales
             return res.status(409).json({ 
                 error: 'Este email ya está registrado. ¿Deseas iniciar sesión?' 
             });
@@ -113,7 +131,7 @@ router.post('/registro', async (req, res) => {
         // ✅ GENERAR TOKEN JWT
         const secret = process.env.JWT_SECRET || process.env.JWT_ACCESS_SECRET;
         if (!secret) {
-            console.error('❌ JWT_SECRET no configurado');
+            logger.error('JWT_SECRET no configurado al crear cuenta de cliente');
             return res.status(500).json({ error: 'Error de configuración del servidor' });
         }
 
@@ -127,7 +145,7 @@ router.post('/registro', async (req, res) => {
             { expiresIn: '30d' }
         );
 
-        console.log('✅ Cliente registrado exitosamente:', nuevoCliente.email);
+        // ✅ SEGURIDAD (C6): No se logea el email del nuevo cliente en producción
 
         res.status(201).json({
             exito: true,
@@ -147,26 +165,18 @@ router.post('/registro', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ Error en registro:', error.message);
-        console.error('   Stack:', error.stack);
+        logger.error('Error en registro de cliente', { message: error.message });
         
-        // Manejo específico de errores de MongoDB
         if (error.code === 11000) {
-            return res.status(409).json({ 
-                error: 'Este email ya está registrado' 
-            });
+            return res.status(409).json({ error: 'Este email ya está registrado' });
         }
         
-        res.status(500).json({ 
-            error: 'Error al crear la cuenta. Intenta nuevamente.' 
-        });
+        res.status(500).json({ error: 'Error al crear la cuenta. Intenta nuevamente.' });
     }
 });
 
-/**
- * POST /api/auth/login - Login de cliente
- * Body: { email, password }
- */
+// ======== LOGIN DE CLIENTE ========
+// Verifica credenciales y devuelve un token JWT si son correctas.
 router.post('/login', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -176,41 +186,43 @@ router.post('/login', async (req, res) => {
         }
 
         // Seleccionar explícitamente el password ya que el esquema lo marca con select: false
-        const cliente = await Client.findOne({ email: email.toLowerCase() }).select('+password');
+        // También traemos loginAttempts y lockUntil para la protección contra intentos repetidos
+        const cliente = await Client.findOne({ email: email.toLowerCase() }).select('+password +loginAttempts +lockUntil');
         
-        console.log(`🔐 [LOGIN] Intento de login para: ${email}`);
-        console.log(`  - Cliente encontrado: ${!!cliente}`);
-        console.log(`  - Cliente tiene password: ${!!cliente?.password}`);
-        console.log(`  - Password es string: ${typeof cliente?.password === 'string'}`);
-        console.log(`  - Password length: ${cliente?.password?.length || 0}`);
-        
+        // ✅ SEGURIDAD (C6): No se logea el email ni el estado de la validación de password (OWASP).
+        // Verbosidad eliminada para no exponer flujo de autenticación en los logs.
         if (!cliente) {
-            console.log(`  ❌ Usuario no encontrado`);
             return res.status(401).json({ error: 'Credenciales inválidas' });
         }
 
-        // Clientes antiguos podrían no tener contraseña establecida (o no recuperada)
+        // ✅ M4: Verificar si la cuenta está temporalmente bloqueada por demasiados intentos fallidos.
+        // El modelo bloquea la cuenta por 2 horas después de 5 intentos incorrectos.
+        // ¿La cuenta no se desbloquea? Revisa isLocked() en models/Client.js
+        if (cliente.isLocked()) {
+            return res.status(423).json({ 
+                error: 'Cuenta bloqueada temporalmente por múltiples intentos fallidos. Intentá nuevamente más tarde.' 
+            });
+        }
+
+        // Clientes antiguos podrían no tener contraseña establecida
         if (!cliente.password) {
-            console.log(`  ❌ Usuario sin contraseña configurada`);
             return res.status(400).json({ error: 'La cuenta no tiene contraseña configurada' });
         }
 
         const passwordValido = await bcrypt.compare(password, cliente.password);
-        console.log(`  - Comparación de password: ${passwordValido ? 'VÁLIDO ✅' : 'INVÁLIDO ❌'}`);
-        
         if (!passwordValido) {
-            console.log(`  ❌ Credenciales inválidas (contraseña no coincide)`);
+            // ✅ M4: Registrar el intento fallido para el sistema de bloqueo automático
+            await cliente.incLoginAttempts();
             return res.status(401).json({ error: 'Credenciales inválidas' });
         }
 
         if (!cliente.activo) {
-            console.log(`  ❌ Cuenta desactivada`);
             return res.status(403).json({ error: 'Esta cuenta está desactivada' });
         }
 
         const secret = process.env.JWT_SECRET || process.env.JWT_ACCESS_SECRET;
         if (!secret) {
-            console.error('❌ JWT secret no configurado');
+            logger.error('JWT_SECRET no configurado al hacer login de cliente');
             return res.status(500).json({ error: 'Configuración del servidor inválida' });
         }
 
@@ -219,7 +231,8 @@ router.post('/login', async (req, res) => {
         cliente.ultimaActividad = new Date();
         await cliente.save();
 
-        console.log(`✅ Cliente inició sesión correctamente: ${cliente.email}`);
+        // ✅ M4: Inicio de sesión exitoso — resetear el contador de intentos fallidos
+        await cliente.resetLoginAttempts();
 
         return res.json({
             exito: true,
@@ -239,16 +252,13 @@ router.post('/login', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ Error en login:', error);
-        // Evitar 500 genérico si podemos identificar el problema
+        logger.error('Error en login de cliente', { message: error.message });
         return res.status(500).json({ error: 'Error interno al iniciar sesión' });
     }
 });
 
-/**
- * GET /api/auth/perfil - Obtener perfil del cliente autenticado
- * Requiere token JWT en header Authorization
- */
+// ======== CONSULTAR PERFIL ========
+// Devuelve los datos del cliente identificado por su token JWT.
 router.get('/perfil', async (req, res) => {
     try {
         const token = req.headers.authorization?.split(' ')[1];
@@ -285,14 +295,13 @@ router.get('/perfil', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ Error obteniendo perfil:', error.message);
+        logger.warn('Error verificando token en /perfil', { message: error.message });
         res.status(401).json({ error: 'Token inválido o expirado' });
     }
 });
 
-/**
- * PUT /api/auth/perfil - Actualizar perfil del cliente
- */
+// ======== ACTUALIZAR PERFIL ========
+// Permite al cliente cambiar su nombre, whatsapp y dirección.
 router.put('/perfil', async (req, res) => {
     try {
         const token = req.headers.authorization?.split(' ')[1];
@@ -307,7 +316,24 @@ router.put('/perfil', async (req, res) => {
 
         // Actualizar datos del cliente
         const { nombre, whatsapp, domicilio, localidad, provincia, direccion, ciudad, codigoPostal } = req.body;
-        
+
+        // ======== VALIDACIÓN DE DATOS PERSONALES ========
+        // Si el cliente envía un nombre, verificar que no esté vacío ni sea muy corto
+        if (nombre !== undefined) {
+            const nombreLimpio = (typeof nombre === 'string') ? nombre.trim() : '';
+            if (nombreLimpio.length < 2 || nombreLimpio.length > 100) {
+                return res.status(400).json({ error: 'El nombre debe tener entre 2 y 100 caracteres' });
+            }
+        }
+        // Si el cliente envía whatsapp, verificar que tenga formato válido (solo dígitos, 7-15 caracteres)
+        if (whatsapp !== undefined && whatsapp !== null && whatsapp !== '') {
+            const whatsappLimpio = String(whatsapp).replace(/\D/g, '');
+            if (whatsappLimpio.length < 7 || whatsappLimpio.length > 15) {
+                return res.status(400).json({ error: 'El número de WhatsApp debe tener entre 7 y 15 dígitos' });
+            }
+        }
+        // ¿Perfil no se actualiza? Revisar este bloque de validación o decoded.id
+
         const cliente = await Client.findByIdAndUpdate(
             decoded.id,
             {
@@ -316,9 +342,6 @@ router.put('/perfil', async (req, res) => {
                 domicilio,
                 localidad,
                 provincia,
-                // mantener compatibilidad si se envían campos legacy
-                direccion,
-                ciudad,
                 codigoPostal
             },
             { new: true }
@@ -341,14 +364,13 @@ router.put('/perfil', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ Error actualizando perfil:', error.message);
+        logger.error('Error actualizando perfil de cliente', { message: error.message });
         res.status(500).json({ error: 'Error al actualizar perfil' });
     }
 });
 
-/**
- * PUT /api/auth/direccion - Actualizar solo dirección del cliente
- */
+// ======== ACTUALIZAR DIRECCIÓN ========
+// Actualiza solo los campos de dirección de envío del cliente.
 router.put('/direccion', async (req, res) => {
     try {
         // Verificar token
@@ -369,12 +391,33 @@ router.put('/direccion', async (req, res) => {
 
         const { domicilio, localidad, provincia, direccion, ciudad, codigoPostal } = req.body;
 
-        // Validación
-        if (!(domicilio || direccion) || !(localidad || ciudad) || !codigoPostal) {
-            return res.status(400).json({ 
-                error: 'Domicilio/di­rección, localidad/ciudad y código postal son requeridos' 
-            });
+        // ======== VALIDACIÓN DE DIRECCIÓN ========
+        // Normalizar: quitar espacios y convertir a string
+        const domicilioFinal = (domicilio || direccion || '').trim();
+        const localidadFinal = (localidad || ciudad || '').trim();
+        const codigoPostalFinal = (codigoPostal || '').toString().trim();
+
+        // Verificar que los campos requeridos no estén vacíos
+        if (!domicilioFinal) {
+            return res.status(400).json({ error: 'El domicilio es requerido' });
         }
+        if (domicilioFinal.length < 5 || domicilioFinal.length > 200) {
+            return res.status(400).json({ error: 'El domicilio debe tener entre 5 y 200 caracteres' });
+        }
+        if (!localidadFinal) {
+            return res.status(400).json({ error: 'La localidad es requerida' });
+        }
+        if (localidadFinal.length < 2 || localidadFinal.length > 100) {
+            return res.status(400).json({ error: 'La localidad debe tener entre 2 y 100 caracteres' });
+        }
+        if (!codigoPostalFinal) {
+            return res.status(400).json({ error: 'El código postal es requerido' });
+        }
+        // El código postal argentino puede ser numérico (4 dígitos) o alfanumérico (ej: B1900)
+        if (!/^\w{3,10}$/.test(codigoPostalFinal)) {
+            return res.status(400).json({ error: 'El código postal no tiene un formato válido (3-10 caracteres alfanuméricos)' });
+        }
+        // ¿Error de validación de dirección? Revisar este bloque de validación
 
         // Buscar y actualizar cliente
         const cliente = await Client.findById(decoded.id).select('-password');
@@ -382,20 +425,16 @@ router.put('/direccion', async (req, res) => {
             return res.status(404).json({ error: 'Cliente no encontrado' });
         }
 
-        // Nuevos campos preferidos
-        if (domicilio) cliente.domicilio = domicilio;
-        if (localidad) cliente.localidad = localidad;
-        if (provincia) cliente.provincia = provincia;
-        // Compatibilidad legacy
-        if (direccion) cliente.direccion = direccion;
-        if (ciudad) cliente.ciudad = ciudad;
-        cliente.codigoPostal = codigoPostal;
+        // Guardar campos normalizados y validados
+        cliente.domicilio = domicilioFinal;
+        cliente.localidad = localidadFinal;
+        if (provincia) cliente.provincia = String(provincia).trim().substring(0, 100);
+        cliente.codigoPostal = codigoPostalFinal;
         
         await cliente.save();
 
-        console.log('✅ Dirección actualizada para:', cliente.email);
-
         res.json({
+
             exito: true,
             mensaje: 'Dirección actualizada correctamente',
             cliente: {
@@ -412,7 +451,7 @@ router.put('/direccion', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('❌ Error actualizando dirección:', error.message);
+        logger.error('Error actualizando dirección de cliente', { message: error.message });
         res.status(500).json({ error: 'Error al actualizar dirección' });
     }
 });

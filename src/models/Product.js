@@ -1,3 +1,25 @@
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * La estructura de los productos en la base de datos.
+ * Guarda toda la información de cada producto: nombre, descripción,
+ * imágenes, variantes (tamaños/colores) y precios.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. Cada producto tiene dos precios:
+ *    - 'precioBase': Lo que el negocio necesita recibir (sin comisión de MP).
+ *    - 'precio': Lo que ve el cliente (ya incluye la comisión de Mercado Pago).
+ * 2. Cuando cambia la tasa de comisión, el campo 'precio' se recalcula en todos los productos.
+ * 3. El campo 'precioBase' NO cambia al actualizar la tasa.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿Los precios con decimales? → El recalculador usa Math.ceil() para enteros
+ * - ¿Productos sin 'precioBase'? → Son productos viejos; usar el endpoint de migración
+ * - ¿El máximo de imágenes falla? → Revisar el validador que limita a 20 imágenes
+ * - Documentación oficial: https://mongoosejs.com/docs/guide.html
+ * ======================================================
+ */
+
 import mongoose from "mongoose";
 
 const imagenSchema = new mongoose.Schema({
@@ -86,7 +108,7 @@ const productoSchema = new mongoose.Schema(
       default: Date.now 
     },
     
-    cantidadUnidades: { type: Number, default: 1 },
+    cantidadUnidades: { type: Number, default: 1, min: 1 }, // ✅ O5: mínimo 1 — evita guardar cantidad cero o negativa
     propiedadesPersonalizadas: { type: Map, of: String, default: {} },
   },
   {

@@ -1,17 +1,22 @@
-/**
- * Modelo: PaymentConfig
- * 
- * PROPÓSITO:
- * - Almacenar configuración global de comisiones de pasarelas de pago
- * - Permitir actualización centralizada sin redeploy
- * - Historial de cambios para auditoría
- * 
- * FLUJO:
- * 1. Admin modifica tasa desde panel
- * 2. Se guarda en DB
- * 3. Se dispara recálculo masivo de productos
- * 4. Productos quedan con precio ya inflado
- * 5. En checkout: se muestra precio final sin recargos adicionales
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * La configuración de comisiones de Mercado Pago guardada en la base de datos.
+ * En lugar de tener la tasa de comisión escrita fija en el código,
+ * se guarda aquí para poder cambiarla desde el panel sin tocar el servidor.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. El admin modifica la tasa de comisión desde el panel.
+ * 2. El nuevo valor se guarda aquí en la base de datos.
+ * 3. Se dispara un recálculo masivo de todos los productos.
+ * 4. Los productos quedan con el precio ya incluyendo la comisión.
+ * 5. En el checkout: el cliente ve el precio final sin cargos extra.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿Los precios no se actualizan al cambiar la tasa? → Revisar el controlador paymentConfigController
+ * - ¿El cálculo de precio es incorrecto? → Revisar el método 'calcularPrecioVenta'
+ * - Fórmula: PrecioVenta = (PrecioBase + comisiónFija) / (1 - tasa)
+ * ======================================================
  */
 
 import mongoose from 'mongoose';
@@ -60,9 +65,10 @@ const paymentConfigSchema = new mongoose.Schema({
     default: Date.now
   },
 
+  // ✅ CORREGIDO: ref apuntaba a 'AdminUser' pero el modelo se llama 'Admin'
   actualizadoPor: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'AdminUser'
+    ref: 'Admin'
   },
 
   // Historial de cambios (últimos 10)
@@ -70,14 +76,15 @@ const paymentConfigSchema = new mongoose.Schema({
     tasaAnterior: Number,
     tasaNueva: Number,
     fecha: { type: Date, default: Date.now },
-    usuario: { type: mongoose.Schema.Types.ObjectId, ref: 'AdminUser' },
+    // ✅ CORREGIDO: ref apuntaba a 'AdminUser' pero el modelo se llama 'Admin'
+    usuario: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin' },
     productosAfectados: Number
   }]
 }, {
   timestamps: true
 });
 
-// Método estático para obtener configuración actual
+// Devuelve la configuración activa. Si no existe ninguna, la crea con valores por defecto.
 paymentConfigSchema.statics.obtenerConfigActual = async function() {
   let config = await this.findOne({ configKey: 'mercadopago_default' });
   
@@ -94,7 +101,8 @@ paymentConfigSchema.statics.obtenerConfigActual = async function() {
   return config;
 };
 
-// Método para calcular precio de venta a partir de precio base
+// Calcula el precio de venta a partir del precio base aplicando la comisión de MP.
+// Fórmula: (PrecioBase + comisiónFija) / (1 - tasa)
 paymentConfigSchema.methods.calcularPrecioVenta = function(precioBase) {
   const r = this.tasaComision;
   const f = this.comisionFija;
@@ -106,7 +114,8 @@ paymentConfigSchema.methods.calcularPrecioVenta = function(precioBase) {
   return Math.round(precioVenta * 100) / 100;
 };
 
-// Método para calcular precio base a partir de precio de venta (reversa)
+// Calcula el precio base a partir del precio de venta (operación inversa).
+// Se usa cuando el admin quiere saber cuánto recibe neto de un precio publicado.
 paymentConfigSchema.methods.calcularPrecioBase = function(precioVenta) {
   const r = this.tasaComision;
   const f = this.comisionFija;

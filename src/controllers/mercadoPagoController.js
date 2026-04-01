@@ -1,220 +1,168 @@
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * Controlador de pagos con Mercado Pago.
+ * Se encarga de crear los checkouts (enlaces de pago) y
+ * procesar las notificaciones que MP envía cuando alguien paga.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. El cliente crea una orden en el sitio web.
+ * 2. El frontend llama a createCheckoutPreference para obtener el enlace de pago.
+ * 3. El cliente es redirigido al sitio de Mercado Pago y completa el pago.
+ * 4. Mercado Pago envía una notificación automática (webhook) a handleWebhook.
+ * 5. handleWebhook llama a procesarPago, que busca el pedido y actualiza su estado.
+ * 6. Si hay errores de red, procesarPagoConRetry reintenta hasta 3 veces.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿El cliente no puede pagar? → Revisar createCheckoutPreference y los logs de MP
+ * - ¿El pedido no pasa a "aprobado" después del pago? → Revisar procesarPago
+ * - ¿Aparece error de firma en los logs? → El middleware verifyMercadoPagoSignature lo maneja
+ * - ¿El estado de un pago es incorrecto? → Revisar getPaymentStatus
+ * - Documentación oficial: https://www.mercadopago.com.ar/developers/es/reference
+ * ======================================================
+ */
+
 import axios from 'axios';
-import crypto from 'crypto';
 import Order from '../models/Order.js';
 import Client from '../models/Client.js';
 import MercadoPagoService from '../services/MercadoPagoService.js';
 import logger from '../utils/logger.js';
 
-// Configuración de Mercado Pago (API)
+// URL base de la API de Mercado Pago y token de acceso al servidor
 const MP_API_URL = 'https://api.mercadopago.com';
 const MP_ACCESS_TOKEN = process.env.MERCADO_PAGO_ACCESS_TOKEN;
 
-/**
- * ✅ CONTROLADOR MERCADO PAGO - REFACTORIZADO 2025
- * Usa el nuevo MercadoPagoService con SDK oficial
- */
 
-/**
- * Crear preferencia de Mercado Pago (checkout)
- * Frontend envía el ordenId después de crear la orden
- * 
- * ✅ SEGURIDAD:
- * - Idempotencia: Reutiliza preferencia existente si ya fue creada
- * - Previene cobros duplicados por múltiples clics
- */
+// ======== CREAR PREFERENCIA DE PAGO ========
+// Cuando el cliente llega al checkout, esta función genera el enlace de pago en Mercado Pago.
+// Si el pedido ya tiene un enlace vigente, lo reutiliza para evitar cobros dobles.
+// ¿El botón de pago no aparece? → Verificar que MERCADO_PAGO_ACCESS_TOKEN esté configurado.
+
 export const createCheckoutPreference = async (req, res) => {
     try {
         const { ordenId } = req.body;
 
         if (!ordenId) {
-            logger.error('MP_NO_ORDER_ID: ordenId no proporcionado en request', {
-                body: req.body
-            });
+            logger.warn('MP: ordenId no recibido en solicitud de checkout', { ip: req.ip });
             return res.status(400).json({ error: 'ordenId requerido' });
         }
 
-        // Obtener orden
         const orden = await Order.findById(ordenId);
         if (!orden) {
-            logger.error('MP_ORDER_NOT_FOUND', `Orden ${ordenId} no encontrada`, {
-                ordenId
-            });
+            logger.warn('MP: Pedido no encontrado al crear preferencia', { ordenId });
             return res.status(404).json({ error: 'Orden no encontrada' });
         }
 
-        // ✅ IDEMPOTENCIA: Verificar si ya existe preferencia para esta orden
+        // ======== VERIFICACIÓN DE PERTENENCIA ========
+        // Solo el cliente dueño de la orden (o un admin) puede crear/reutilizar
+        // su preferencia de pago. Sin esto, cualquier cliente autenticado podría
+        // iniciar el pago de la orden de otro cliente conociendo su ID.
+        const esAdmin = req.user?.rol === 'admin';
+        const esPropietario = orden.clienteId?.toString() === req.user?.id;
+        if (!esAdmin && !esPropietario) {
+            logger.security('Intento de acceso a preferencia de pedido ajeno', { ordenId, userId: req.user?.id });
+            return res.status(403).json({ error: 'No autorizado' });
+        }
+
+        // Si ya existe un enlace de pago para este pedido, reutilizarlo.
+        // Esto evita cobros dobles cuando el cliente hace clic varias veces seguidas.
         if (orden.payment?.mercadoPago?.preferenceId && orden.payment?.mercadoPago?.initPoint) {
-            console.log(`♻️ Reutilizando preferencia existente para orden ${orden.orderNumber}`);
-            logger.info('MP_PREFERENCE_REUSED', {
-                orderId: orden._id,
+            logger.info('MP: Reutilizando preferencia existente', {
+                ordenId:     orden._id,
                 orderNumber: orden.orderNumber,
-                preferenceId: orden.payment.mercadoPago.preferenceId
+                preferenceId:orden.payment.mercadoPago.preferenceId
             });
-            
             return res.json({
-                ok: true,
-                checkoutUrl: orden.payment.mercadoPago.initPoint,
+                ok:              true,
+                checkoutUrl:     orden.payment.mercadoPago.initPoint,
                 sandboxCheckoutUrl: orden.payment.mercadoPago.sandboxInitPoint,
-                preferenceId: orden.payment.mercadoPago.preferenceId,
-                reused: true
+                preferenceId:    orden.payment.mercadoPago.preferenceId,
+                reused:          true
             });
         }
 
-        // ✅ Crear nueva preferencia (servicio maneja idempotency key)
+        // Crear nuevo enlace de pago en Mercado Pago
         const { preferenceId, initPoint, sandboxInitPoint } = await MercadoPagoService.createPreference(orden);
 
-        // Log de auditoría
-        logger.info('MP_PREFERENCE_CREATED', {
-            orderId: orden._id,
+        logger.info('MP: Preferencia creada exitosamente', {
+            ordenId:     orden._id,
             orderNumber: orden.orderNumber,
             preferenceId,
-            total: orden.total,
-            itemsCount: orden.items.length
+            itemsCount:  orden.items.length
         });
 
-        console.log('✅ Preferencia MP creada:', preferenceId, `para orden ${orden.orderNumber}`);
-
         res.json({
-            ok: true,
-            checkoutUrl: initPoint,
+            ok:              true,
+            checkoutUrl:     initPoint,
             sandboxCheckoutUrl: sandboxInitPoint,
             preferenceId
         });
 
     } catch (err) {
-        console.error('❌ Error creando preferencia MP:', err.message);
-        logger.error('MP_PREFERENCE_ERROR', {
+        logger.error('MP: Error al crear preferencia de pago', {
             message: err.message,
-            ordenId: req.body.ordenId,
-            stack: err.stack
+            ordenId: req.body.ordenId
         });
         res.status(500).json({ error: 'Error creando checkout' });
     }
 };
 
-/**
- * Webhook de Mercado Pago
- * Recibe notificaciones de pago
- * 
- * ✅ SEGURIDAD CRÍTICA:
- * - Valida firma HMAC SHA256 (x-signature header)
- * - Previene webhooks falsos de atacantes
- * - Implementa idempotencia para evitar procesamiento duplicado
- */
+
+// ======== WEBHOOK DE MERCADO PAGO ========
+// Mercado Pago llama a esta función automáticamente cuando alguien realiza un pago.
+// La firma HMAC ya fue validada por el middleware ANTES de llegar aquí.
+// IMPORTANTE: Se responde 200 de inmediato y el procesamiento continúa en segundo plano,
+// porque Mercado Pago exige respuesta en menos de 5 segundos o reintenta el envío.
+// ¿El pedido no se actualiza después del pago? → Revisar los logs con el ID del webhook.
+
 export const handleWebhook = async (req, res) => {
-    try {
-        // ✅ CRÍTICO: Responder INMEDIATAMENTE (< 100ms)
-        // MP tiene timeout de 5 segundos. Si no respondemos rápido, reintenta.
-        res.status(200).json({ status: 'received' });
+    // Responder inmediatamente para cumplir el timeout de Mercado Pago (< 5 segundos)
+    res.status(200).json({ status: 'received' });
 
-        // Extraer parámetros según documentación oficial MP
-        const type = req.query.type;                    // "payment" o "merchant_order"
-        const paymentId = req.query['data.id'];         // ID del pago desde query
-        const webhookId = req.query.id;                 // ID único del webhook
-        const liveMode = req.query.live_mode === 'true'; // Boolean: true = producción
+    const type      = req.query.type;
+    const paymentId = req.query['data.id'];
+    const webhookId = req.query.id;
+    const liveMode  = req.query.live_mode === 'true';
 
-        console.log('📨 [Webhook] Recibido:', {
-            type,
-            paymentId,
-            webhookId,
-            liveMode,
-            hasXSignature: !!req.headers['x-signature'],
-            hasXRequestId: !!req.headers['x-request-id']
-        });
+    logger.info('MP: Webhook recibido', { type, paymentId, webhookId, liveMode, ip: req.ip });
 
-        // ✅ PROCESAMIENTO ASÍNCRONO (en background)
-        // No bloquear la respuesta HTTP
-        (async () => {
-            try {
-                // Crear log de webhook
-                const webhookLog = new WebhookLog({
-                    type: type || 'unknown',
-                    externalId: webhookId,
-                    payload: req.body,
-                    ipCliente: req.ip
-                });
-
-                // ✅ FIRMA YA VALIDADA POR MIDDLEWARE verifyMercadoPagoSignature
-                // El middleware procesa la firma HMAC antes de llegar aquí
-                // Si req.body llegó hasta acá, la firma fue validada correctamente
-                console.log('✅ [Webhook] Firma validada por middleware - Continuando procesamiento');
-                logger.info('WEBHOOK_SIGNATURE_VALIDATED', {
-                    ip: req.ip,
+    // Procesar en segundo plano para no bloquear la respuesta HTTP ya enviada
+    (async () => {
+        try {
+            if (type === 'payment' && paymentId) {
+                await procesarPagoConRetry(paymentId);
+            } else if (type === 'merchant_order' && paymentId) {
+                await procesarMerchantOrder(paymentId);
+            } else {
+                logger.warn('MP: Tipo de webhook no reconocido o sin paymentId', {
                     type,
-                    webhookId,
-                    liveMode
-                });
-                
-                // ✅ IDEMPOTENCIA: Verificar si ya procesamos este webhook
-                const webhookUniqueId = `${type}-${webhookId}-${paymentId}`;
-                const existingWebhook = await WebhookLog.findOne({
-                    externalId: webhookUniqueId,
-                    procesadoCorrectamente: true
-                });
-                
-                if (existingWebhook) {
-                    console.log('♻️ [Webhook] Ya procesado anteriormente, ignorando');
-                    logger.info('WEBHOOK_ALREADY_PROCESSED', { webhookUniqueId });
-                    webhookLog.resultado = {
-                        tipo: 'warning',
-                        mensaje: 'Webhook duplicado, ya fue procesado'
-                    };
-                    await webhookLog.save();
-                    return;
-                }
-                
-                // Actualizar ID único para idempotencia
-                webhookLog.externalId = webhookUniqueId;
-
-                // ✅ PROCESAR SEGÚN TIPO
-                if (type === 'payment' && paymentId) {
-                    await procesarPagoConRetry(paymentId, webhookLog);
-                } else if (type === 'merchant_order' && paymentId) {
-                    await procesarMerchantOrder(paymentId, webhookLog);
-                } else {
-                    console.warn('⚠️ [Webhook] Tipo no reconocido o paymentId faltante:', type);
-                    webhookLog.resultado = {
-                        tipo: 'warning',
-                        mensaje: `Tipo no soportado: ${type}`
-                    };
-                }
-
-                await webhookLog.save();
-                console.log(`✅ [Webhook] Procesado correctamente: ${type}`);
-
-            } catch (err) {
-                console.error('❌ Error en procesamiento asíncrono de webhook:', err.message);
-                logger.error('WEBHOOK_ASYNC_PROCESSING_ERROR', {
-                    message: err.message,
-                    stack: err.stack,
-                    webhookId: req.query.id,
-                    type: req.query.type
+                    paymentId,
+                    webhookId
                 });
             }
-        })(); // ← Ejecutar sin await
-
-    } catch (err) {
-        console.error('❌ Error crítico en webhook handler:', err.message);
-        logger.error('WEBHOOK_HANDLER_CRITICAL_ERROR', {
-            message: err.message,
-            stack: err.stack
-        });
-        res.status(500).json({ error: 'Internal server error' });
-    }
+        } catch (err) {
+            logger.error('MP: Error al procesar webhook en segundo plano', {
+                message: err.message,
+                webhookId,
+                type
+            });
+        }
+    })();
 };
 
-/**
- * Procesar notificación de pago
- */
-async function procesarPago(paymentId, webhookLog) {
+
+// ======== PROCESAR NOTIFICACIÓN DE PAGO ========
+// Cuando MP avisa que alguien pagó, esta función busca el pedido en la base de datos
+// y actualiza su estado (aprobado, rechazado, etc.).
+// ¿El estado del pedido no cambia? → Verificar que external_reference coincida con el _id del pedido.
+
+async function procesarPago(paymentId) {
     try {
-        // Obtener información del pago
+        // Consultar a Mercado Pago los detalles del pago
         const response = await axios.get(
             `${MP_API_URL}/payments/${paymentId}`,
             {
-                headers: {
-                    'Authorization': `Bearer ${MP_ACCESS_TOKEN}`
-                },
+                headers: { 'Authorization': `Bearer ${MP_ACCESS_TOKEN}` },
                 timeout: 8000
             }
         );
@@ -222,110 +170,78 @@ async function procesarPago(paymentId, webhookLog) {
         const payment = response.data;
         const ordenId = payment.external_reference;
 
-        // Buscar orden
         const orden = await Order.findById(ordenId);
         if (!orden) {
-            webhookLog.resultado = {
-                tipo: 'error',
-                mensaje: 'Orden no encontrada'
-            };
-            logger.error('MP_WEBHOOK_ORDER_NOT_FOUND', {
-                message: `Orden ${ordenId} no encontrada en webhook`,
-                paymentId,
-                externalReference: ordenId
-            });
+            logger.error('MP: Pedido no encontrado al procesar pago', { paymentId, ordenId });
             return;
         }
 
-        // Detectar pagos duplicados
+        // Si el pago ya está aprobado en nuestra base de datos, ignorar para evitar duplicados
         if (orden.estadoPago === 'approved' && payment.status === 'approved') {
-            webhookLog.resultado = {
-                tipo: 'warning',
-                mensaje: 'Pago duplicado detectado, ignorando'
-            };
-            webhookLog.procesadoCorrectamente = true;
-            console.warn('⚠️ DUPLICATE_PAYMENT_DETECTED:', {
+            logger.warn('MP: Pago duplicado detectado, ignorando', {
                 orderNumber: orden.orderNumber,
-                paymentId,
-                previousPaymentId: orden.mercadoPagoPaymentId
+                paymentId
             });
             return;
         }
 
-        // Actualizar estado según pago
+        // Traducir el estado de Mercado Pago al estado interno del sistema
         const statusMapping = {
-            'approved': 'approved',
-            'pending': 'pending',
-            'rejected': 'rejected',
+            'approved':  'approved',
+            'pending':   'pending',
+            'rejected':  'rejected',
             'cancelled': 'cancelled'
         };
 
-        orden.estadoPago = statusMapping[payment.status] || 'pending';
+        orden.estadoPago           = statusMapping[payment.status] || 'pending';
         orden.mercadoPagoPaymentId = paymentId;
 
-        // 🔍 DEBUG: Loggear datos del pago recibidos de MP
-        console.log('🔍 [Webhook] Datos del pago recibidos de Mercado Pago:');
-        console.log('   Payment ID:', payment.id);
-        console.log('   Status:', payment.status);
-        console.log('   Payment Type:', payment.payment_type);
-        console.log('   Payment Method:', payment.payment_method);
-        console.log('   Transaction Amount:', payment.transaction_amount);
-        console.log('   Card Info:', payment.card);
-        console.log('   Payer:', payment.payer);
-
-        // ✅ GUARDAR INFORMACIÓN COMPLETA DE TRANSACCIÓN
-        // Esto se mostrará en el admin y en el cliente
+        // Guardar datos de la transacción para mostrar en el panel de admin.
+        // NOTA: payerEmail/payerId son datos del comprador necesarios para soporte.
+        // No se loguean en archivos de log del servidor (OWASP: no exponer datos personales en logs).
         orden.payment = orden.payment || {};
-        const grossAmount = Number(payment.transaction_amount) || 0;
-        const netReceived = Number(payment.transaction_details?.net_received_amount) || null;
-        const feeAmount = netReceived !== null ? Math.max(0, grossAmount - netReceived) : null;
+        const grossAmount      = Number(payment.transaction_amount) || 0;
+        const netReceived      = Number(payment.transaction_details?.net_received_amount) || null;
+        const feeAmount        = netReceived !== null ? Math.max(0, grossAmount - netReceived) : null;
         const percentEffective = feeAmount !== null && grossAmount > 0 ? feeAmount / grossAmount : null;
 
         orden.payment.mercadoPago = {
-            preferenceId: payment.preference_id || undefined,
-            paymentId: payment.id,
-            status: payment.status,
-            statusDetail: payment.status_detail,
-            paymentType: payment.payment_type, // 'account_money', 'ticket', 'atm', 'credit_card', etc.
-            paymentMethod: payment.payment_method?.id || 'unknown', // 'visa', 'master', 'amex', etc.
+            preferenceId:      payment.preference_id || undefined,
+            paymentId:         payment.id,
+            status:            payment.status,
+            statusDetail:      payment.status_detail,
+            paymentType:       payment.payment_type,
+            paymentMethod:     payment.payment_method?.id || 'unknown',
             transactionAmount: grossAmount,
-            netAmount: netReceived ?? undefined,
-            installments: payment.installments || 1,
-            createdAt: new Date(payment.date_created),
-            lastUpdate: new Date(payment.last_modified),
-            approvedAt: payment.date_approved ? new Date(payment.date_approved) : null,
-            payerEmail: payment.payer?.email,
-            payerId: payment.payer?.id,
+            netAmount:         netReceived ?? undefined,
+            installments:      payment.installments || 1,
+            createdAt:         new Date(payment.date_created),
+            lastUpdate:        new Date(payment.last_modified),
+            approvedAt:        payment.date_approved ? new Date(payment.date_approved) : null,
+            payerEmail:        payment.payer?.email,
+            payerId:           payment.payer?.id,
             authorizationCode: payment.authorization_code,
             merchantAccountId: payment.merchant_account_id,
             fee: {
-                amount: feeAmount ?? 0,
+                amount:           feeAmount ?? 0,
                 percentEffective: percentEffective ?? 0
             }
         };
         orden.payment.method = 'mercadopago';
 
-        console.log('✅ [Webhook] Datos guardados en orden.payment.mercadoPago:', {
-            paymentId: orden.payment.mercadoPago.paymentId,
-            status: orden.payment.mercadoPago.status,
-            paymentMethod: orden.payment.mercadoPago.paymentMethod,
-            transactionAmount: orden.payment.mercadoPago.transactionAmount
-        });
-
-        // Guardar detalles adicionales (legacy - mantener por compatibilidad)
+        // Mantener detalles anteriores por compatibilidad con código existente
         orden.detallesPago = {
             cardLastFour: payment.card?.last_four_digits,
-            cardBrand: payment.card?.issuer?.name,
+            cardBrand:    payment.card?.issuer?.name,
             installments: payment.installments,
-            paymentType: payment.payment_type
+            paymentType:  payment.payment_type
         };
 
-        // Si pago aprobado, cambiar estado del pedido
+        // Si el pago fue aprobado, activar el pedido y registrar en el historial del cliente
         if (payment.status === 'approved') {
             orden.estadoPedido = 'en_produccion';
-            orden.fechaPago = new Date();
-            
-            // Actualizar cliente
+            orden.fechaPago    = new Date();
+
             const cliente = await Client.findById(orden.clienteId);
             if (cliente) {
                 cliente.totalGastado += orden.total;
@@ -336,25 +252,20 @@ async function procesarPago(paymentId, webhookLog) {
                 await cliente.save();
             }
 
-            // Registrar en historial
             orden.historialEstados.push({
                 estado: 'en_produccion',
-                nota: 'Pago aprobado por Mercado Pago'
+                nota:   'Pago aprobado por Mercado Pago'
             });
 
-            console.log(`✅ Pago aprobado: ${paymentId} para orden ${orden.orderNumber}`);
-
-            // Log simple
-            console.log('✅ PAYMENT_APPROVED:', {
+            logger.info('MP: Pago aprobado', {
                 orderNumber: orden.orderNumber,
-                paymentId,
-                total: orden.total,
-                clienteId: cliente?._id
+                paymentId
             });
+
         } else if (payment.status === 'rejected') {
             orden.motivoRechazo = payment.status_detail || 'Rechazado por el sistema de pagos';
-            console.warn('⚠️ PAYMENT_REJECTED:', {
-                orderNumber: orden.orderNumber,
+            logger.warn('MP: Pago rechazado', {
+                orderNumber:  orden.orderNumber,
                 paymentId,
                 statusDetail: payment.status_detail
             });
@@ -362,222 +273,144 @@ async function procesarPago(paymentId, webhookLog) {
 
         await orden.save();
 
-        webhookLog.resultado = {
-            tipo: 'success',
-            mensaje: `Pago actualizado a: ${orden.estadoPago}`,
-            ordenId: orden._id
-        };
-        webhookLog.procesadoCorrectamente = true;
+        logger.info('MP: Estado del pedido actualizado', {
+            ordenId:    orden._id,
+            estadoPago: orden.estadoPago
+        });
 
     } catch (err) {
-        webhookLog.resultado = {
-            tipo: 'error',
-            mensaje: err.message
-        };
-        console.error('❌ Error procesando pago:', err.message);
-        logger.error('MP_PAYMENT_PROCESSING_ERROR', {
-            message: err.message,
-            paymentId,
-            stack: err.stack
-        });
+        logger.error('MP: Error al procesar pago', { message: err.message, paymentId });
+        // Propagar para que procesarPagoConRetry pueda reintentar
+        throw err;
     }
 }
 
-/**
- * Procesar merchant order
- */
-async function procesarMerchantOrder(merchantOrderId, webhookLog) {
+
+// ======== PROCESAR NOTIFICACIÓN TIPO MERCHANT ORDER ========
+// Algunas notificaciones de MP llegan como "merchant_order" en vez de "payment".
+// Esta función maneja ese caso verificando el último pago registrado en la orden.
+
+async function procesarMerchantOrder(merchantOrderId) {
     try {
         const response = await axios.get(
             `${MP_API_URL}/merchant_orders/${merchantOrderId}`,
-            {
-                headers: {
-                    'Authorization': `Bearer ${MP_ACCESS_TOKEN}`
-                }
-            }
+            { headers: { 'Authorization': `Bearer ${MP_ACCESS_TOKEN}` } }
         );
 
         const merchantOrder = response.data;
-        const ordenId = merchantOrder.external_reference;
+        const ordenId       = merchantOrder.external_reference;
 
         const orden = await Order.findById(ordenId);
         if (!orden) {
-            webhookLog.resultado = {
-                tipo: 'error',
-                mensaje: 'Orden no encontrada'
-            };
+            logger.warn('MP: Pedido no encontrado al procesar merchant order', {
+                merchantOrderId,
+                ordenId
+            });
             return;
         }
 
-        // Verificar pagos
-        if (merchantOrder.payments && merchantOrder.payments.length > 0) {
-            const payments = merchantOrder.payments;
-            const pago = payments[payments.length - 1]; // Último pago
+        if (merchantOrder.payments?.length > 0) {
+            const pago = merchantOrder.payments[merchantOrder.payments.length - 1];
 
             if (pago.status === 'approved') {
-                orden.estadoPago = 'approved';
-                orden.estadoPedido = 'en_produccion';
-                orden.fechaPago = new Date();
+                orden.estadoPago           = 'approved';
+                orden.estadoPedido         = 'en_produccion';
+                orden.fechaPago            = new Date();
                 orden.mercadoPagoPaymentId = pago.id;
             }
 
             await orden.save();
+            logger.info('MP: Merchant order procesada', {
+                merchantOrderId,
+                ordenId,
+                status: pago?.status
+            });
         }
 
-        webhookLog.resultado = {
-            tipo: 'success',
-            mensaje: 'Merchant Order procesada',
-            ordenId
-        };
-        webhookLog.procesadoCorrectamente = true;
-
     } catch (err) {
-        webhookLog.resultado = {
-            tipo: 'error',
-            mensaje: err.message
-        };
-        console.error('❌ Error procesando merchant order:', err.message);
+        logger.error('MP: Error al procesar merchant order', {
+            message: err.message,
+            merchantOrderId
+        });
     }
 }
 
-/**
- * Obtener estado de un pago
- */
+
+// ======== CONSULTAR ESTADO DE UN PAGO ========
+// El frontend usa esta función para saber si un pedido fue pagado.
+// ¿El estado no se actualiza en pantalla? → Verificar que ordenId sea correcto.
+
 export const getPaymentStatus = async (req, res) => {
     try {
         const { ordenId } = req.params;
 
         const orden = await Order.findById(ordenId);
         if (!orden) {
-            logger.error('MP_STATUS_ORDER_NOT_FOUND', {
-                message: `Orden ${ordenId} no encontrada`,
-                ordenId
-            });
             return res.status(404).json({ error: 'Orden no encontrada' });
         }
 
+        // ======== VERIFICACIÓN DE PERTENENCIA ========
+        // Solo el cliente dueño de la orden (o un admin) puede consultar su estado de pago.
+        // Sin esto, cualquier cliente autenticado podría ver el estado de pago
+        // y los últimos 4 dígitos de la tarjeta de otro cliente conociendo el ID del pedido.
+        const esAdmin = req.user?.rol === 'admin';
+        const esPropietario = orden.clienteId?.toString() === req.user?.id;
+        if (!esAdmin && !esPropietario) {
+            logger.security('Intento de consultar estado de pedido ajeno', { ordenId, userId: req.user?.id });
+            return res.status(403).json({ error: 'No autorizado' });
+        }
+
         res.json({
-            ok: true,
-            orderNumber: orden.orderNumber,
-            estadoPago: orden.estadoPago,
-            estadoPedido: orden.estadoPedido,
+            ok:            true,
+            orderNumber:   orden.orderNumber,
+            estadoPago:    orden.estadoPago,
+            estadoPedido:  orden.estadoPedido,
             mercadoPagoId: orden.mercadoPagoId,
-            total: orden.total,
-            fechaPago: orden.fechaPago,
-            detallesPago: orden.detallesPago
+            total:         orden.total,
+            fechaPago:     orden.fechaPago,
+            detallesPago:  orden.detallesPago
         });
 
     } catch (err) {
-        console.error('❌ Error obteniendo estado de pago:', err.message);
-        logger.error('MP_STATUS_ERROR', {
+        logger.error('MP: Error al obtener estado de pago', {
             message: err.message,
-            ordenId: req.params.ordenId,
-            stack: err.stack
+            ordenId: req.params.ordenId
         });
         res.status(500).json({ error: 'Error obteniendo estado' });
     }
 };
 
-/**
- * ✅ VALIDAR FIRMA DEL WEBHOOK (x-signature header)
- * Implementación según documentación oficial de Mercado Pago
- * https://www.mercadopago.com.ar/developers/es/docs/your-integrations/notifications/webhooks
- * 
- * @param {string} xSignature - Header x-signature (formato: ts=123456789,v1=hash)
- * @param {string} xRequestId - Header x-request-id
- * @param {Object} body - Body del request
- * @returns {boolean} true si la firma es válida
- */
-function validateWebhookSignature(xSignature, xRequestId, body) {
-    try {
-        const secretKey = process.env.MERCADO_PAGO_WEBHOOK_SECRET || process.env.MERCADO_PAGO_ACCESS_TOKEN;
-        
-        if (!secretKey) {
-            console.error('❌ MERCADO_PAGO_WEBHOOK_SECRET no configurado');
-            return false;
-        }
-        
-        // Extraer ts (timestamp) y v1 (hash) de x-signature
-        // Formato esperado: "ts=1234567890,v1=abc123def456..."
-        const signatureParts = xSignature.split(',');
-        let ts, hash;
-        
-        signatureParts.forEach(part => {
-            const [key, value] = part.split('=');
-            if (key && key.trim() === 'ts') ts = value;
-            if (key && key.trim() === 'v1') hash = value;
-        });
-        
-        if (!ts || !hash) {
-            console.error('❌ Formato de x-signature inválido');
-            return false;
-        }
-        
-        // Construir manifest string según especificación de MP
-        // Formato: "id:<data.id>;request-id:<x-request-id>;ts:<ts>;"
-        const dataId = body?.data?.id || body?.id || '';
-        const manifestString = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
-        
-        console.log(`   🔐 Validando firma HMAC...`);
-        console.log(`   📝 Manifest: ${manifestString}`);
-        
-        // Calcular HMAC SHA256
-        const hmac = crypto
-            .createHmac('sha256', secretKey)
-            .update(manifestString)
-            .digest('hex');
-        
-        const isValid = hmac === hash;
-        
-        if (!isValid) {
-            console.error(`   ❌ Firma no coincide`);
-            console.error(`   Expected: ${hmac}`);
-            console.error(`   Received: ${hash}`);
-        }
-        
-        return isValid;
-        
-    } catch (error) {
-        console.error('❌ Error validando firma del webhook:', error.message);
-        return false;
-    }
-}
 
-/**
- * Procesar pago con retry logic y backoff exponencial
- * Maneja timeouts y errores transitorios de la API de Mercado Pago
- */
-async function procesarPagoConRetry(paymentId, webhookLog, maxRetries = 3) {
-    let lastError;
-    
+// ======== REINTENTOS AUTOMÁTICOS ========
+// Si la consulta a Mercado Pago falla por un error temporal (red, timeout),
+// esta función reintenta automáticamente hasta 3 veces con pausas crecientes.
+// ¿El pago sigue sin procesarse tras 3 intentos? → Revisar conectividad del servidor a internet.
+
+async function procesarPagoConRetry(paymentId, maxRetries = 3) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            console.log(`   🔄 Intento ${attempt}/${maxRetries} - Obteniendo pago ${paymentId}`);
-            
-            await procesarPago(paymentId, webhookLog);
-            
-            console.log(`   ✅ Pago procesado exitosamente`);
-            return; // Éxito
-            
+            logger.info(`MP: Intento ${attempt}/${maxRetries} de procesar pago`, { paymentId });
+            await procesarPago(paymentId);
+            return; // Éxito — salir del loop
         } catch (error) {
-            lastError = error;
-            
-            // Si es el último intento, lanzar error
             if (attempt === maxRetries) {
-                console.error(`   ❌ Fallo definitivo después de ${maxRetries} intentos`);
+                logger.error(`MP: Fallo definitivo tras ${maxRetries} intentos`, {
+                    message: error.message,
+                    paymentId
+                });
                 throw error;
             }
-            
-            // Backoff exponencial: 1s, 2s, 4s
+            // Esperar tiempo creciente antes de reintentar: 1s → 2s → 4s
             const delay = 1000 * Math.pow(2, attempt - 1);
-            console.warn(`   ⚠️ Error en intento ${attempt}, reintentando en ${delay}ms: ${error.message}`);
-            
+            logger.warn(`MP: Error en intento ${attempt}, reintentando en ${delay}ms`, {
+                message: error.message,
+                paymentId
+            });
             await new Promise(resolve => setTimeout(resolve, delay));
         }
     }
-    
-    throw lastError;
 }
+
 
 export default {
     createCheckoutPreference,

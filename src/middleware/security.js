@@ -1,4 +1,28 @@
-// src/middleware/security.js
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * Configuración central de seguridad del servidor.
+ * Aplica protecciones estándar de industria en TODAS las rutas
+ * de una vez: cabeceras seguras, límites de tamaño de datos y
+ * límites de velocidad para evitar abusos.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. Helmet agrega cabeceras HTTP que protegen contra ataques web comunes.
+ * 2. El límite de 10kb en el body evita que alguien envíe archivos enormes
+ *    para saturar el servidor.
+ * 3. Los rate limiters controlan cuántas veces por ventana de tiempo
+ *    puede acceder cada IP a cada tipo de ruta.
+ * 4. Esta función exporta los limiters específicos (login, escritura, upload)
+ *    para que las rutas que los necesiten los apliquen individualmente.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿El servidor no procesa el body de un request? → Revisar el límite de 10kb
+ * - ¿Las cabeceras de seguridad están ausentes? → Revisar la configuración de Helmet
+ * - ¿Usuarios legítimos reciben 429? → Ajustar los max en los limiters según el tráfico real
+ * - Documentación oficial: https://helmetjs.github.io/ | https://express-rate-limit.mintlify.app/
+ * ======================================================
+ */
+
 import express from 'express';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -13,13 +37,17 @@ export const applySecurity = (app) => {
     // Trust proxy para obtener IP real en Render/Heroku
     app.set('trust proxy', 1);
 
-    // ✅ Helper para detectar localhost
+    // ======== DETECCIÓN DE ENTORNO LOCAL ========
+    // Detecta si la solicitud viene de la misma máquina (desarrollo local).
+    // En desarrollo, los rate limiters aplican límites más altos para no bloquear al dev.
     const isLocalhost = (req) => {
-        const ip = req.ip || req.connection.remoteAddress;
+        // req.socket.remoteAddress reemplaza req.connection.remoteAddress (obsoleto en Node.js 18+)
+        const ip = req.ip || req.socket?.remoteAddress;
         return (ip === '127.0.0.1' || ip === '::1' || ip?.includes('localhost'));
     };
 
-    // ✅ RATE LIMITER GENERAL - Menos estricto
+    // ======== RATE LIMITER GENERAL ========
+    // Aplica a todas las rutas /api. Límite alto para no bloquear uso normal.
     const apiLimiter = rateLimit({
         windowMs: 15 * 60 * 1000, // 15 minutos
         max: process.env.NODE_ENV === 'production' ? 200 : 1000, // 200 req/15min = ~13 req/min
@@ -38,7 +66,8 @@ export const applySecurity = (app) => {
     });
     app.use('/api', apiLimiter);
 
-    // ✅ RATE LIMITER PARA ESCRITURA (POST/PUT/DELETE) - Más estricto
+    // ======== RATE LIMITER DE ESCRITURA ========
+    // Aplica a POST/PUT/DELETE. Más estricto para evitar modificaciones masivas.
     const writeLimiter = rateLimit({
         windowMs: 15 * 60 * 1000,
         max: process.env.NODE_ENV === 'production' ? 50 : 200, // 50 escrituras/15min
@@ -49,7 +78,9 @@ export const applySecurity = (app) => {
         skip: (req) => process.env.NODE_ENV !== 'production' && isLocalhost(req)
     });
 
-    // ✅ RATE LIMITER PARA LOGIN - Muy estricto
+    // ======== RATE LIMITER DE LOGIN ========
+    // Muy estricto: máximo 5 intentos fallidos en 15 minutos.
+    // Protege contra ataques de fuerza bruta sobre el panel de administración.
     const loginLimiter = rateLimit({
         windowMs: 15 * 60 * 1000,
         max: process.env.NODE_ENV === 'production' ? 5 : 20, // Máximo 5 intentos
@@ -60,7 +91,8 @@ export const applySecurity = (app) => {
         skip: (req) => process.env.NODE_ENV !== 'production' && isLocalhost(req)
     });
 
-    // ✅ RATE LIMITER PARA UPLOAD - Muy restrictivo
+    // ======== RATE LIMITER DE UPLOADS ========
+    // Límite de 20 subidas por hora en producción. Evita abuso del almacenamiento de Cloudinary.
     const uploadLimiter = rateLimit({
         windowMs: 60 * 60 * 1000, // 1 hora
         max: process.env.NODE_ENV === 'production' ? 20 : 100, // 20 uploads/hora

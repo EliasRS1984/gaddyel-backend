@@ -1,5 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
+import { existsSync } from "fs";
+import { resolve } from "path";
 import cors from "cors";
 import mongoSanitize from 'express-mongo-sanitize';
 import { conectarDB } from "./config/db.js";
@@ -25,7 +27,16 @@ import { errorHandler } from "./middleware/errorHandler.js";
 import verifyToken from "./middleware/authMiddleware.js";
 import cookieParser from 'cookie-parser';
 
-dotenv.config();
+// Cargar variables de entorno: .env.local tiene prioridad sobre .env
+// Permite tener configuración de desarrollo local sin modificar producción
+const envLocalPath = resolve(process.cwd(), '.env.local');
+const envPath = resolve(process.cwd(), '.env');
+
+if (existsSync(envLocalPath)) {
+    dotenv.config({ path: envLocalPath });
+    console.log('✅ Cargando configuración desde .env.local (desarrollo)');
+}
+dotenv.config({ path: envPath }); // .env como fallback para variables no definidas en .env.local
 // redeploy trigger: update CORS config timestamp
 
 // ✅ Validar variables de entorno al inicio
@@ -161,6 +172,16 @@ const { loginLimiter } = applySecurity(app);
 // Conexión DB
 conectarDB();
 
+// ======== HEALTH CHECK ========
+// Endpoint liviano para comprobar que el servidor está despierto.
+// No consulta la base de datos — responde de inmediato.
+// El frontend lo llama al cargar la página para calentar el servidor
+// antes de que el usuario navegue al catálogo (problema de cold start en Render).
+// ¿El endpoint no responde? Revisa que el servidor esté corriendo y sin errores de arranque.
+app.get('/api/health', (_req, res) => {
+    res.status(200).json({ ok: true });
+});
+
 /* ===== RUTAS PÚBLICAS ===== */
 app.use("/api/productos", productoRoutes);
 app.use("/api/upload", uploadRoutes);
@@ -168,35 +189,37 @@ app.use("/api/productos/seed", seedRoutes);
 app.use("/api/carousel", carouselRoutes); // Carrusel de inicio
 app.use("/api/auth", clientAuthRoutes); // Autenticación de clientes
 
-// ENDPOINT DE PRUEBA - Verificar autenticación
-app.get("/api/test/auth", (req, res) => {
-    console.log('📨 GET /test/auth - Endpoint de prueba');
-    console.log('   Headers:', req.headers);
-    res.json({ ok: true, mensaje: 'Endpoint de prueba sin autenticación' });
-});
+// ENDPOINTS DE PRUEBA - Solo disponibles en entorno de desarrollo local
+// En producción estos endpoints no existen para evitar filtrar información.
+if (process.env.NODE_ENV !== 'production') {
+    app.get("/api/test/auth", (req, res) => {
+        res.json({ ok: true, mensaje: 'Endpoint de prueba sin autenticación' });
+    });
+}
 
-// ✅ ENDPOINT DE DIAGNÓSTICO - Verificar variables de entorno
-app.get("/api/diagnostico/env", (req, res) => {
-    console.log('🔍 GET /diagnostico/env - Verificar variables de entorno');
-    
-    const diagnosis = {
-        NODE_ENV: process.env.NODE_ENV || 'undefined',
-        MERCADO_PAGO_ACCESS_TOKEN: process.env.MERCADO_PAGO_ACCESS_TOKEN ? '✅ CONFIGURADO' : '❌ NO CONFIGURADO',
-        MERCADO_PAGO_PUBLIC_KEY: process.env.MERCADO_PAGO_PUBLIC_KEY ? '✅ CONFIGURADO' : '❌ NO CONFIGURADO',
-        FRONTEND_URL: process.env.FRONTEND_URL || 'undefined',
-        MONGODB_URI: process.env.MONGODB_URI ? '✅ CONFIGURADO' : '❌ NO CONFIGURADO',
-        JWT_SECRET: process.env.JWT_SECRET ? '✅ CONFIGURADO' : '❌ NO CONFIGURADO',
-        timestamp: new Date().toISOString()
-    };
-    
-    console.log('📋 Diagnosis:', diagnosis);
-    res.json(diagnosis);
-});
+// ENDPOINT DE DIAGNÓSTICO - Solo disponible en desarrollo local
+// En producción este endpoint no existe para evitar filtrar información de configuración
+if (process.env.NODE_ENV !== 'production') {
+    app.get("/api/diagnostico/env", (req, res) => {
+        const diagnosis = {
+            NODE_ENV: process.env.NODE_ENV || 'undefined',
+            MERCADO_PAGO_ACCESS_TOKEN: process.env.MERCADO_PAGO_ACCESS_TOKEN ? 'CONFIGURADO' : 'NO CONFIGURADO',
+            MERCADO_PAGO_PUBLIC_KEY: process.env.MERCADO_PAGO_PUBLIC_KEY ? 'CONFIGURADO' : 'NO CONFIGURADO',
+            FRONTEND_URL: process.env.FRONTEND_URL || 'undefined',
+            MONGODB_URI: process.env.MONGODB_URI ? 'CONFIGURADO' : 'NO CONFIGURADO',
+            JWT_SECRET: process.env.JWT_SECRET ? 'CONFIGURADO' : 'NO CONFIGURADO',
+            timestamp: new Date().toISOString()
+        };
+        res.json(diagnosis);
+    });
+}
 
 app.get("/api/test/auth-protected", (req, res, next) => {
-    console.log('📨 GET /test/auth-protected - Endpoint protegido de prueba');
     next();
 }, verifyToken, (req, res) => {
+    if (process.env.NODE_ENV === 'production') {
+        return res.status(404).json({ error: 'Ruta no disponible' });
+    }
     res.json({ ok: true, mensaje: 'Autenticación exitosa', usuario: req.user });
 });
 

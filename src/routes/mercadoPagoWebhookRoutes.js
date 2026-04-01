@@ -1,118 +1,110 @@
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * La ruta que recibe las notificaciones de Mercado Pago sobre pagos.
+ * Cada vez que un cliente paga, MP envía una notificación (webhook) a esta URL.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. MP envía una solicitud POST con datos del pago.
+ * 2. Se verifica que la firma del mensaje sea autentica (HMAC).
+ * 3. Se responde 200 immediatamente para que MP no reintente.
+ * 4. En segundo plano, se procesa la notificación y se actualiza el pedido.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿El pago no se procesa? → Verificar que MERCADO_PAGO_WEBHOOK_SECRET esté configurado
+ * - ¿Error de firma inválida? → Revisar validateWebhookSignature en MercadoPagoService
+ * - Documentación oficial: https://www.mercadopago.com.ar/developers/es/docs/your-integrations/notifications/webhooks
+ * ======================================================
+ */
+
 import express from 'express';
+import logger from '../utils/logger.js';
 import MercadoPagoService from '../services/MercadoPagoService.js';
 import OrderEventLog from '../models/OrderEventLog.js';
+import { webhookLimiter } from '../middleware/rateLimiters.js';
 
 const router = express.Router();
 
+// Rate limiting aplicado directamente en el router para que funcione
+// incluso cuando esta ruta se monta antes de los middlewares globales de seguridad
+router.use(webhookLimiter);
+
 /**
- * ✅ MIDDLEWARE: Parser JSON para webhooks
- * CRÍTICO: Esta ruta se monta ANTES del express.json() global,
- * por lo que necesitamos nuestro propio parser aquí.
+ * Comentarios para el parser JSON del webhook:
+ * Esta ruta se monta ANTES del express.json() global,
+ * por lo que necesita su propio parser.
  */
 router.use(express.json({ limit: '10kb' }));
 
-/**
- * ✅ WEBHOOK DE MERCADO PAGO
- * POST /api/webhooks/mercadopago
- * 
- * SEGURIDAD 2025:
- * - Validación obligatoria de x-signature
- * - Procesamiento asíncrono para evitar timeouts
- * - Idempotencia para evitar procesamiento duplicado
- * - Rate limiting en el middleware principal
- * 
- * Documentación: https://www.mercadopago.com.ar/developers/es/docs/your-integrations/notifications/webhooks
- */
+// ======== WEBHOOK PRINCIPAL ========
+// POST /api/webhooks/mercadopago
+// Recibe notificaciones de Mercado Pago cuando cambia el estado de un pago.
 router.post('/mercadopago', async (req, res) => {
     const startTime = Date.now();
     
     try {
-        console.log('\n🔔 [Webhook MP] ===== NUEVA NOTIFICACIÓN =====');
-        console.log(`   Timestamp: ${new Date().toISOString()}`);
-        console.log(`   IP: ${req.ip}`);
-        console.log(`   Query Params:`, req.query);
-        console.log(`   Headers:`, {
-            'x-signature': req.headers['x-signature'] ? '✅ Presente' : '❌ Faltante',
-            'x-request-id': req.headers['x-request-id'] ? '✅ Presente' : '❌ Faltante',
-            'content-type': req.headers['content-type']
+        logger.info('Webhook de Mercado Pago recibido', {
+            ip: req.ip,
+            requestId: req.headers['x-request-id'] || 'sin-id',
+            tieneSignature: !!req.headers['x-signature']
         });
-        console.log(`   Body:`, JSON.stringify(req.body, null, 2));
 
-        // ✅ PASO 1: Validar firma del webhook
-        // IMPORTANTE: Pasar req.query porque data.id viene de query params según documentación MP
+        // ======== PASO 1: VERIFICAR QUE EL MENSAJE ES AUTENTICO ========
+        // Valida la firma criptográfica del mensaje para rechazar solicitudes falsas
         const isValidSignature = MercadoPagoService.validateWebhookSignature(req.headers, req.query);
         
         if (!isValidSignature) {
-            console.log('   ❌ Firma inválida - Rechazando webhook');
+            logger.security('Webhook con firma inválida rechazado', { ip: req.ip });
             
-            // Registrar intento sospechoso
+            // Registrar el intento sin incluir datos del request para evitar log de información sensible
             await OrderEventLog.create({
                 orderId: null,
                 eventType: 'webhook_invalid_signature',
                 description: 'Intento de webhook con firma inválida',
-                metadata: {
-                    headers: req.headers,
-                    body: req.body,
-                    ip: req.ip
-                }
+                metadata: { ip: req.ip, requestId: req.headers['x-request-id'] || null }
             });
 
-            return res.status(401).json({ 
-                error: 'Firma inválida',
-                message: 'La firma del webhook no pudo ser validada'
-            });
+            return res.status(401).json({ error: 'Firma inválida' });
         }
 
-        console.log('   ✅ Firma validada correctamente');
+        logger.debug('Firma del webhook validada correctamente');
 
-        // ✅ PASO 2: Responder inmediatamente a Mercado Pago (200 OK)
-        // Esto evita que MP reintente por timeout
+        // ======== PASO 2: RESPONDER A MP INMEDIATAMENTE ========
+        // Si tardamos más de 5 segundos, MP va a reintentar el webhook.
+        // Por eso respondemos 200 primero y procesamos en segundo plano.
         res.status(200).json({ 
             success: true, 
             message: 'Notificación recibida',
             timestamp: new Date().toISOString()
         });
 
-        // ✅ PASO 3: Procesar notificación de forma asíncrona
-        // No bloquear la respuesta HTTP
+        // ======== PASO 3: PROCESAR EN SEGUNDO PLANO ========
+        // No bloquea la respuesta HTTP ya enviada arriba
         setImmediate(async () => {
             try {
                 const result = await MercadoPagoService.processWebhookNotification(req.body);
-                
                 const processingTime = Date.now() - startTime;
-                console.log(`   ✅ Webhook procesado en ${processingTime}ms`);
-                console.log(`   Resultado:`, result);
+                logger.info('Webhook procesado exitosamente', { processingTimeMs: processingTime, result });
 
             } catch (error) {
-                console.error('   ❌ Error procesando webhook:', error);
+                logger.error('Error procesando webhook en segundo plano', { message: error.message });
                 
-                // Registrar error pero no fallar la respuesta HTTP
+                // Registrar el error para poder revisarlo luego en el historial del pedido
                 await OrderEventLog.create({
                     orderId: null,
                     eventType: 'webhook_processing_error',
                     description: `Error procesando webhook: ${error.message}`,
-                    metadata: {
-                        error: error.message,
-                        stack: error.stack,
-                        body: req.body
-                    }
+                    metadata: { message: error.message }
                 });
             }
         });
 
     } catch (error) {
-        console.error('   ❌ Error crítico en webhook:', error);
+        logger.error('Error crítico en recepción de webhook', { message: error.message });
         
-        // Si ya enviamos respuesta, no hacer nada más
-        if (res.headersSent) {
-            return;
-        }
+        if (res.headersSent) return;
 
-        // Error antes de enviar respuesta
-        res.status(500).json({ 
-            error: 'Error interno del servidor',
-            message: error.message 
-        });
+        res.status(500).json({ error: 'Error interno del servidor' });
     }
 });
 

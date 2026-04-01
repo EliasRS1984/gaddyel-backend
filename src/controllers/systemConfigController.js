@@ -1,14 +1,28 @@
-/**
- * Controller: SystemConfig
- * 
- * PROPÓSITO:
- * - Gestionar configuración global del sistema
- * - CRUD de configuraciones centralizadas (envío, comisiones, límites)
- * - Historial de cambios para auditoría
+/*
+ * ======================================================
+ * ¿QUÉ ES ESTO?
+ * Controlador de configuración global del sistema.
+ * Gestiona las reglas de envío, tasas de comisión de Mercado Pago
+ * y los límites de imágenes/variantes de productos.
+ *
+ * ¿CÓMO FUNCIONA?
+ * 1. El admin puede consultar la configuración activa (tasas, envío, etc.).
+ * 2. Al actualizar la tasa de comisión, se recalculan automáticamente TODOS los precios
+ *    de venta usando un bulkWrite (operación masiva eficiente, no N queries individuales).
+ * 3. Cada cambio se guarda en un historial para auditoría (quién, cuándo, qué cambió).
+ * 4. También incluye herramientas de migración para actualizar productos con estructura vieja.
+ *
+ * ¿DÓNDE BUSCAR SI HAY PROBLEMAS?
+ * - ¿Los precios no se actualizaron al cambiar la tasa? → Revisar actualizarConfiguracion
+ * - ¿El cálculo de precio preview es incorrecto? → Revisar calcularPreviewPrecio
+ * - ¿La migración de precios falla? → Revisar migrarPrecios y el estado de los productos
+ * - ¿Los precios tienen decimales raros? → Revisar limpiarEstructuraPrecios
+ * ======================================================
  */
 
 import SystemConfig from '../models/SystemConfig.js';
 import { Producto } from '../models/Product.js';
+import logger from '../utils/logger.js';
 
 /**
  * GET /api/system-config
@@ -29,11 +43,10 @@ export const obtenerConfiguracion = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error obteniendo configuración:', error);
+    logger.error('Error al obtener configuración del sistema', { message: error.message });
     res.status(500).json({
       success: false,
       message: 'Error al obtener configuración del sistema',
-      error: error.message
     });
   }
 };
@@ -145,21 +158,37 @@ export const actualizarConfiguracion = async (req, res) => {
 
         // CRÍTICO: Recalcular todos los productos si cambió la tasa
         if (mp.tasaComision !== tasaAnterior) {
-          console.log(`🔄 Recalculando precios con nueva tasa: ${mp.tasaComision * 100}%`);
+          logger.info(`Recalculando precios con nueva tasa: ${mp.tasaComision * 100}%`);
           
-          const productosExistentes = await Producto.find({});
-          
-          for (const producto of productosExistentes) {
-            if (producto.precioBase) {
-              const nuevoPrecioVenta = config.calcularPrecioVenta(producto.precioBase);
-              
-              producto.precio = nuevoPrecioVenta;
-              producto.tasaComisionAplicada = mp.tasaComision;
-              producto.fechaActualizacionPrecio = new Date();
-              
-              await producto.save();
-              productosActualizados++;
-            }
+          // ✅ RENDIMIENTO (C1): Una sola query + un bulkWrite en lugar de N saves individuales
+          const productosExistentes = await Producto.find({
+            precioBase: { $exists: true, $gt: 0 }
+          }).lean();
+
+          if (productosExistentes.length > 0) {
+            const ahora = new Date();
+            // calcularPrecioVenta devuelve un objeto {precioVenta, precioExacto, ajusteRedondeo, montoComision, tasaAplicada}
+            // Se extraen todos los campos para mantener los datos de auditoría actualizados
+            const operaciones = productosExistentes.map(producto => {
+              const breakdown = config.calcularPrecioVenta(producto.precioBase);
+              return {
+                updateOne: {
+                  filter: { _id: producto._id },
+                  update: {
+                    $set: {
+                      precio: breakdown.precioVenta,
+                      precioCalculadoExacto: breakdown.precioExacto,
+                      ajusteRedondeo: breakdown.ajusteRedondeo,
+                      montoComision: breakdown.montoComision,
+                      tasaComisionAplicada: breakdown.tasaAplicada,
+                      fechaActualizacionPrecio: ahora
+                    }
+                  }
+                }
+              };
+            });
+            const resultado = await Producto.bulkWrite(operaciones, { ordered: false });
+            productosActualizados = resultado.modifiedCount;
           }
         }
       }
@@ -239,11 +268,10 @@ export const actualizarConfiguracion = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error actualizando configuración:', error);
+    logger.error('Error al actualizar configuración del sistema', { message: error.message });
     res.status(500).json({
       success: false,
       message: 'Error al actualizar configuración',
-      error: error.message
     });
   }
 };
@@ -261,11 +289,10 @@ export const obtenerHistorial = async (req, res) => {
       data: config.historial.reverse() // Más recientes primero
     });
   } catch (error) {
-    console.error('Error obteniendo historial:', error);
+    logger.error('Error al obtener historial de configuración', { message: error.message });
     res.status(500).json({
       success: false,
       message: 'Error al obtener historial',
-      error: error.message
     });
   }
 };
@@ -312,11 +339,10 @@ export const calcularPreviewPrecio = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error calculando preview:', error);
+    logger.error('Error al calcular preview de precio', { message: error.message });
     res.status(500).json({
       success: false,
       message: 'Error al calcular preview',
-      error: error.message
     });
   }
 };
@@ -335,28 +361,17 @@ export const calcularPreviewPrecio = async (req, res) => {
  */
 export const migrarPrecios = async (req, res) => {
   try {
-    console.log('\n🔄 Iniciando migración de precios desde endpoint...\n');
+    logger.info('Iniciando migración de precios desde endpoint');
 
     const TASA_MIGRACION = 0.0761;
 
-    // DEBUG: Ver estadísticas de BD
-    console.log('\n📊 ===== DIAGNÓSTICO DE PRODUCTOS =====');
+    // Recolectar estadísticas antes de migrar para el diagnóstico
     const todosProductos = await Producto.find().select('_id nombre precio precioBase').lean();
-    console.log(`Total productos en BD: ${todosProductos.length}`);
     
     const conPrecioBase = todosProductos.filter(p => p.precioBase && p.precioBase > 0).length;
     const sinPrecioBase = todosProductos.filter(p => !p.precioBase || p.precioBase <= 0).length;
     
-    console.log(`✅ Con precioBase válido: ${conPrecioBase}`);
-    console.log(`❌ Sin precioBase o = 0: ${sinPrecioBase}`);
-    
-    if (sinPrecioBase > 0) {
-      console.log('\n📋 Primeros 5 productos sin precioBase:');
-      todosProductos.filter(p => !p.precioBase || p.precioBase <= 0).slice(0, 5).forEach((p, idx) => {
-        console.log(`  [${idx+1}] "${p.nombre}" | precio: $${p.precio} | precioBase: ${p.precioBase || 'NO EXISTE'}`);
-      });
-    }
-    console.log('===================================\n');
+    logger.info(`Diagnóstico de productos: total=${todosProductos.length}, conPrecioBase=${conPrecioBase}, sinPrecioBase=${sinPrecioBase}`);
 
     // Encontrar productos sin precioBase válido
     const productosParaMigrar = await Producto.find({
@@ -367,7 +382,7 @@ export const migrarPrecios = async (req, res) => {
       ]
     }).select('_id nombre precio precioBase');
 
-    console.log(`📊 Productos encontrados para migrar: ${productosParaMigrar.length}`);
+    logger.info(`Productos encontrados para migrar: ${productosParaMigrar.length}`);
 
     if (productosParaMigrar.length === 0) {
       return res.status(200).json({
@@ -427,7 +442,7 @@ export const migrarPrecios = async (req, res) => {
         }
 
         migrados++;
-        console.log(`✅ [${migrados}/${productosParaMigrar.length}] ${producto.nombre} | Precio: $${producto.precio} → Base: $${precioBaseRedondeado}`);
+        logger.info(`Producto migrado [${migrados}/${productosParaMigrar.length}]: ${producto.nombre} | Precio: $${producto.precio} → Base: $${precioBaseRedondeado}`);
 
       } catch (error) {
         errores.push({
@@ -436,11 +451,11 @@ export const migrarPrecios = async (req, res) => {
           precioActual: producto.precio,
           error: error.message
         });
-        console.error(`❌ Error en ${producto.nombre}: ${error.message}`);
+        logger.warn(`Error migrando producto ${producto.nombre}`, { message: error.message });
       }
     }
 
-    console.log(`\n✅ Migración completada: ${migrados} exitosos, ${errores.length} errores\n`);
+    logger.info(`Migración completada: ${migrados} exitosos, ${errores.length} errores`);
 
     res.status(200).json({
       success: true,
@@ -454,11 +469,10 @@ export const migrarPrecios = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error en migración de precios:', error);
+    logger.error('Error en migración de precios', { message: error.message });
     res.status(500).json({
       success: false,
       message: 'Error al ejecutar migración de precios',
-      error: error.message
     });
   }
 };
@@ -479,20 +493,20 @@ export const migrarPrecios = async (req, res) => {
  */
 export const recalcularPrecios = async (req, res) => {
   try {
-    console.log('\n🔄 Iniciando recalculación masiva de precios...');
+    logger.info('Iniciando recalculación masiva de precios');
     
     // Obtener configuración actual
     const config = await SystemConfig.obtenerConfigActual();
     const tasaActual = config.comisiones.mercadoPago.tasaComision;
     
-    console.log(`📊 Tasa actual de comisión: ${(tasaActual * 100).toFixed(2)}%`);
+    logger.info(`Tasa actual de comisión: ${(tasaActual * 100).toFixed(2)}%`);
     
     // Buscar TODOS los productos que tengan precioBase
     const productosConPrecioBase = await Producto.find({
       precioBase: { $exists: true, $gt: 0 }
     }).select('_id nombre precioBase precio tasaComisionAplicada');
 
-    console.log(`📦 Productos encontrados: ${productosConPrecioBase.length}`);
+    logger.info(`Productos con precioBase encontrados: ${productosConPrecioBase.length}`);
 
     if (productosConPrecioBase.length === 0) {
       return res.status(200).json({
@@ -539,7 +553,7 @@ export const recalcularPrecios = async (req, res) => {
         }
 
         recalculados++;
-        console.log(`✅ [${recalculados}/${productosConPrecioBase.length}] ${producto.nombre} | Base: $${producto.precioBase} → Venta: $${breakdown.precioVenta} (Exacto: $${breakdown.precioExacto.toFixed(2)}, Ajuste: $${breakdown.ajusteRedondeo.toFixed(2)})`);
+        logger.info(`Precio recalculado [${recalculados}/${productosConPrecioBase.length}]: ${producto.nombre} | Base: $${producto.precioBase} → Venta: $${breakdown.precioVenta}`);
 
       } catch (error) {
         errores.push({
@@ -548,11 +562,11 @@ export const recalcularPrecios = async (req, res) => {
           precioBase: producto.precioBase,
           error: error.message
         });
-        console.error(`❌ Error en ${producto.nombre}: ${error.message}`);
+        logger.warn(`Error recalculando precio de ${producto.nombre}`, { message: error.message });
       }
     }
 
-    console.log(`\n✅ Recalculación completada: ${recalculados} exitosos, ${errores.length} errores\n`);
+    logger.info(`Recalculación completada: ${recalculados} exitosos, ${errores.length} errores`);
 
     res.status(200).json({
       success: true,
@@ -567,11 +581,10 @@ export const recalcularPrecios = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error en recalculación de precios:', error);
+    logger.error('Error en recalculación de precios', { message: error.message });
     res.status(500).json({
       success: false,
       message: 'Error al ejecutar recalculación de precios',
-      error: error.message
     });
   }
 };
@@ -592,14 +605,14 @@ export const recalcularPrecios = async (req, res) => {
  */
 export const limpiarEstructuraPrecios = async (req, res) => {
   try {
-    console.log('\n🧹 Iniciando limpieza de estructura de precios...');
+    logger.info('Iniciando limpieza de estructura de precios');
 
     // Buscar productos con campos en propiedadesPersonalizadas
     const productosConEstructuraVieja = await Producto.find({
       "propiedadesPersonalizadas.precioBase": { $exists: true }
     }).select('_id nombre precio propiedadesPersonalizadas');
 
-    console.log(`📦 Productos con estructura vieja: ${productosConEstructuraVieja.length}`);
+    logger.info(`Productos con estructura vieja encontrados: ${productosConEstructuraVieja.length}`);
 
     if (productosConEstructuraVieja.length === 0) {
       return res.status(200).json({
@@ -659,9 +672,7 @@ export const limpiarEstructuraPrecios = async (req, res) => {
         }
 
         limpiados++;
-        console.log(`✅ [${limpiados}/${productosConEstructuraVieja.length}] ${producto.nombre}`);
-        console.log(`   Base: ${precioBase} → ${precioBaseRedondeado} (redondeado)`);
-        console.log(`   Venta: ${precioActual} → ${precioRedondeado} (redondeado)`);
+        logger.info(`Estructura limpiada [${limpiados}/${productosConEstructuraVieja.length}]: ${producto.nombre} | Base: $${precioBase}→$${precioBaseRedondeado}, Venta: $${precioActual}→$${precioRedondeado}`);
 
       } catch (error) {
         errores.push({
@@ -669,11 +680,11 @@ export const limpiarEstructuraPrecios = async (req, res) => {
           nombre: producto.nombre,
           error: error.message
         });
-        console.error(`❌ Error en ${producto.nombre}: ${error.message}`);
+        logger.warn(`Error limpiando estructura de ${producto.nombre}`, { message: error.message });
       }
     }
 
-    console.log(`\n✅ Limpieza completada: ${limpiados} exitosos, ${errores.length} errores\n`);
+    logger.info(`Limpieza completada: ${limpiados} exitosos, ${errores.length} errores`);
 
     res.status(200).json({
       success: true,
@@ -687,11 +698,10 @@ export const limpiarEstructuraPrecios = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error en limpieza de estructura:', error);
+    logger.error('Error en limpieza de estructura de precios', { message: error.message });
     res.status(500).json({
       success: false,
       message: 'Error al ejecutar limpieza de estructura',
-      error: error.message
     });
   }
 };
