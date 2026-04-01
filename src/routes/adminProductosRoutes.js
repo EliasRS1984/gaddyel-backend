@@ -19,6 +19,7 @@ import {
     toggleDestacadoProducto
 } from "../controllers/productController.js";
 import authMiddleware from "../middleware/authMiddleware.js";
+import { validarProducto, productoCreateSchema, productoUpdateSchema } from "../validators/productValidator.js";
 import logger from "../utils/logger.js";
 
 const router = express.Router();
@@ -42,10 +43,10 @@ router.use(soloAdmin);
 router.get("/", getProductos);
 
 // Crear un producto
-router.post("/", crearProducto);
+router.post("/", validarProducto(productoCreateSchema), crearProducto);
 
 // Editar un producto
-router.put("/:id", editarProducto);
+router.put("/:id", validarProducto(productoUpdateSchema), editarProducto);
 
 // Toggle destacado de un producto
 router.patch("/:id/destacado", toggleDestacadoProducto);

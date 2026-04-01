@@ -24,6 +24,37 @@ import { Producto } from "../models/Product.js";
 import productService from "../services/productService.js";
 import logger from "../utils/logger.js";
 
+// ======== NORMALIZACIÓN DE COLORES ========
+// El modelo MongoDB guarda colores como String[].
+// La UI del admin maneja colores como [{nombre, hex}][].
+// Estas dos funciones convierten entre ambos formatos usando "Nombre|#hexcode" como string.
+
+// Convierte [{nombre:"Rojo", hex:"#FF0000"}] → ["Rojo|#FF0000"]
+const serializarColores = (colores) => {
+    if (!Array.isArray(colores)) return [];
+    return colores.map(c => {
+        if (typeof c === 'string') return c; // ya es string, respetar
+        if (c && typeof c === 'object' && c.nombre) {
+            return c.hex ? `${c.nombre}|${c.hex}` : c.nombre;
+        }
+        return String(c);
+    }).filter(Boolean);
+};
+
+// Convierte ["Rojo|#FF0000"] → [{nombre:"Rojo", hex:"#FF0000"}]
+// Convierte ["Rojo"] (formato legacy) → [{nombre:"Rojo", hex:""}]
+const deserializarColores = (colores) => {
+    if (!Array.isArray(colores)) return [];
+    return colores.map(c => {
+        if (typeof c === 'object' && c !== null) return c; // ya es objeto
+        if (typeof c === 'string' && c.includes('|')) {
+            const [nombre, hex] = c.split('|');
+            return { nombre, hex };
+        }
+        return { nombre: c, hex: '' };
+    });
+};
+
 // Obtener todos los productos
 export const obtenerProductos = async (req, res, next) => {
     try {
@@ -110,7 +141,7 @@ export const obtenerProductoPorId = async (req, res, next) => {
             categoria: prod.categoria,
             material: prod.material,
             tamanos: prod.tamanos,
-            colores: prod.colores,
+            colores: deserializarColores(prod.colores),
             personalizable: prod.personalizable,
             precio: prod.precio,
             cantidadUnidades: prod.cantidadUnidades,
@@ -224,7 +255,7 @@ export const crearProducto = async (req, res) => {
             categoria,
             material,
             tamanos: Array.isArray(tamanos) ? tamanos : (tamanos ? tamanos.split(",") : []),
-            colores: Array.isArray(colores) ? colores : (colores ? colores.split(",") : []),
+            colores: serializarColores(Array.isArray(colores) ? colores : (colores ? colores.split(",") : [])),
             personalizable,
             precioBase: precioBaseNum,
             precio: precioNumero,
@@ -334,6 +365,11 @@ export const editarProducto = async (req, res) => {
                 return res.status(400).json({ error: "Stock debe ser un número no negativo" });
             }
             data.cantidadUnidades = stock;
+        }
+
+        // Normalizar colores: la UI envía [{nombre,hex}], MongoDB guarda ["Nombre|#hex"]
+        if (data.colores !== undefined) {
+            data.colores = serializarColores(data.colores);
         }
 
         // Filtrar imagenes para eliminar nulls/undefined

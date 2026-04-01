@@ -23,18 +23,79 @@
 import Joi from "joi";
 
 // ======== ESQUEMA DE VALIDACIÓN PARA CREAR PRODUCTO ========
+// Define qué campos son obligatorios y cuáles son sus límites.
+// Los campos opcionales se envían solo si el admin los completó.
 export const productoCreateSchema = Joi.object({
-    nombre: Joi.string().min(2).max(150).required(),
-    descripcion: Joi.string().max(300).allow("").optional(),
-    descripcionCompleta: Joi.string().allow("").optional(),
-    categoria: Joi.string().required(),
-    material: Joi.string().allow("").optional(),
-    tamanos: Joi.alternatives().try(Joi.array().items(Joi.string()), Joi.string()).optional(),
-    colores: Joi.alternatives().try(Joi.array().items(Joi.string()), Joi.string()).optional(),
-    personalizable: Joi.boolean().optional(),
-    precio: Joi.number().min(0).required(),
-    cantidadUnidades: Joi.number().integer().min(1).required(),
-    destacado: Joi.boolean().optional()
+    nombre:               Joi.string().min(2).max(150).required(),
+    descripcion:          Joi.string().max(300).allow("").optional(),
+    descripcionCompleta:  Joi.string().allow("").optional(),
+    categoria:            Joi.string().required(),
+    material:             Joi.string().allow("").optional(),
+    // Precio base (lo que nos cuesta) y precio de venta (lo que cobra el cliente)
+    precioBase:           Joi.number().min(0).required(),
+    precio:               Joi.number().min(0).required(),
+    tasaComisionAplicada: Joi.number().min(0).max(1).optional(),
+    // Tamaños y colores pueden llegar como texto CSV o como arrays
+    tamanos:              Joi.alternatives().try(
+                            Joi.array().items(Joi.string()),
+                            Joi.string()
+                          ).optional(),
+    // Colores pueden ser strings simples, strings "Nombre|#hex" u objetos {nombre, hex}
+    colores:              Joi.alternatives().try(
+                            Joi.array().items(Joi.alternatives().try(
+                              Joi.object({ nombre: Joi.string(), hex: Joi.string().allow("") }),
+                              Joi.string()
+                            )),
+                            Joi.string()
+                          ).optional(),
+    personalizable:       Joi.boolean().optional(),
+    cantidadUnidades:     Joi.number().integer().min(0).optional(),
+    destacado:            Joi.boolean().optional(),
+    // URLs de imágenes (Cloudinary)
+    imagenSrc:            Joi.string().uri().allow("").optional(),
+    imagenes:             Joi.array().items(
+                            Joi.object({
+                              src: Joi.string().uri().allow(""),
+                              alt: Joi.string().allow("").optional()
+                            })
+                          ).max(20).optional(),
+    propiedadesPersonalizadas: Joi.object().unknown(true).optional(),
+});
+
+// ======== ESQUEMA DE VALIDACIÓN PARA EDITAR PRODUCTO ========
+// Al editar, todos los campos son opcionales porque se puede actualizar
+// solo una parte del producto (nombre, precio, fotos, etc.)
+export const productoUpdateSchema = Joi.object({
+    nombre:               Joi.string().min(2).max(150).optional(),
+    descripcion:          Joi.string().max(300).allow("").optional(),
+    descripcionCompleta:  Joi.string().allow("").optional(),
+    categoria:            Joi.string().optional(),
+    material:             Joi.string().allow("").optional(),
+    precioBase:           Joi.number().min(0).optional(),
+    precio:               Joi.number().min(0).optional(),
+    tasaComisionAplicada: Joi.number().min(0).max(1).optional(),
+    tamanos:              Joi.alternatives().try(
+                            Joi.array().items(Joi.string()),
+                            Joi.string()
+                          ).optional(),
+    colores:              Joi.alternatives().try(
+                            Joi.array().items(Joi.alternatives().try(
+                              Joi.object({ nombre: Joi.string(), hex: Joi.string().allow("") }),
+                              Joi.string()
+                            )),
+                            Joi.string()
+                          ).optional(),
+    personalizable:       Joi.boolean().optional(),
+    cantidadUnidades:     Joi.number().integer().min(0).optional(),
+    destacado:            Joi.boolean().optional(),
+    imagenSrc:            Joi.string().uri().allow("").optional(),
+    imagenes:             Joi.array().items(
+                            Joi.object({
+                              src: Joi.string().uri().allow(""),
+                              alt: Joi.string().allow("").optional()
+                            })
+                          ).max(20).optional(),
+    propiedadesPersonalizadas: Joi.object().unknown(true).optional(),
 });
 
 // ======== FUNCIÓN REUTILIZABLE PARA APLICAR VALIDACIÓN EN RUTAS ========
@@ -51,12 +112,18 @@ export const validarProducto = (schema) => (req, res, next) => {
         payload.colores = payload.colores.split(",").map(s => s.trim()).filter(Boolean);
     }
 
-    const { error, value } = schema.validate(payload, { abortEarly: false, convert: true });
+    const { error, value } = schema.validate(payload, {
+        abortEarly: false,
+        convert: true,
+        allowUnknown: false   // bloquea campos no declarados en el schema
+    });
     if (error) {
         const detalles = error.details.map(d => d.message);
         return res.status(400).json({ error: "Validación fallida", detalles });
     }
     // Re-escribimos req.body con datos normalizados
     req.body = value;
+    next();
+};
     next();
 };
