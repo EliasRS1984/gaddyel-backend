@@ -20,8 +20,7 @@ import mercadoPagoWebhookRoutes from "./routes/mercadoPagoWebhookRoutes.js";
 import clientAuthRoutes from "./routes/clientAuthRoutes.js";
 import carouselRoutes from "./routes/carouselRoutes.js";
 import paymentConfigRoutes from "./routes/paymentConfig.js";
-import systemConfigRoutes from "./routes/systemConfig.js";
-
+import systemConfigRoutes from "./routes/systemConfig.js";import SystemConfig from './models/SystemConfig.js';
 import { applySecurity } from "./middleware/security.js"; 
 import { errorHandler } from "./middleware/errorHandler.js";
 import verifyToken from "./middleware/authMiddleware.js";
@@ -229,6 +228,26 @@ app.use("/api/admin/productos", adminProductosRoutes);     // CRUD protegido con
 app.use("/api/admin/clientes", adminClientesRoutes);       // Gestión de clientes CRM
 app.use("/api/payment-config", paymentConfigRoutes);       // Configuración de comisiones (protegido)
 app.use("/api/system-config", systemConfigRoutes);         // Configuración global del sistema (protegido)
+
+/* ===== CONFIGURACIÓN PÚBLICA DE ENVÍO ===== */
+// Endpoint sin autenticación que expone solo el umbral de envío gratis.
+// El frontend lo usa para mostrar en el FAQ y el carrito el valor actualizado por el admin.
+// No expone datos de precios ni comisiones.
+// ¿El FAQ muestra siempre "3"? Revisá que este endpoint responda en producción.
+app.get('/api/config/envio', async (_req, res) => {
+    try {
+        const config = await SystemConfig.obtenerConfigActual();
+        res.json({
+            cantidadParaEnvioGratis: config.envio.cantidadParaEnvioGratis,
+            costoBase: config.envio.costoBase,
+            habilitarEnvioGratis: config.envio.habilitarEnvioGratis,
+        });
+    } catch (_err) {
+        // Si la base de datos no responde, devolver valores predeterminados
+        // para que el frontend siga mostrando información coherente
+        res.json({ cantidadParaEnvioGratis: 3, costoBase: 12000, habilitarEnvioGratis: true });
+    }
+});
 
 /* ===== RUTAS PÚBLICAS E-COMMERCE ===== */
 app.use("/api/pedidos", orderRoutes);                      // Crear pedidos (público) + listar (admin)
