@@ -21,9 +21,9 @@ import logger from '../utils/logger.js';
 import { validateObjectId } from '../validators/noSqlInjectionValidator.js';
 
 // ======== LISTAR CLIENTES ========
-// Carga todos los clientes. Si el admin escribe en el buscador (?buscar=xxx),
-// filtra por nombre o email. Incluye el resumen de compras de cada uno.
-// ¿La lista no aparece? → Revisar listarClientes.
+// Carga los clientes con soporte de búsqueda por nombre/email y paginación del servidor.
+// Parámetros de query: ?buscar=texto &pagina=1 &limite=20
+// ¿La lista no aparece? → Revisar listarClientes y los parámetros de query.
 export const listarClientes = async (req, res, next) => {
     try {
         let filter = {};
@@ -42,18 +42,32 @@ export const listarClientes = async (req, res, next) => {
             };
         }
 
+        // ======== PAGINACIÓN DEL SERVIDOR ========
+        // Nunca se cargan todos los clientes en el navegador.
+        // Si no se envían parámetros, usa los valores por defecto.
+        const pagina = Math.max(1, parseInt(req.query.pagina, 10) || 1);
+        const limite = Math.min(100, Math.max(1, parseInt(req.query.limite, 10) || 20));
+        const saltar = (pagina - 1) * limite;
+
+        // Contar total para que el admin sepa cuántas páginas hay
+        const total = await Client.countDocuments(filter);
+
         // ✅ RENDIMIENTO: .lean() devuelve objetos JS planos en lugar de documentos
         // Mongoose completos, lo que es más rápido para operaciones de solo lectura.
         const clientes = await Client.find(filter)
             .select('-password')
             .sort({ createdAt: -1 })
+            .skip(saltar)
+            .limit(limite)
             .populate('historialPedidos', 'orderNumber total estadoPago fechaCreacion')
             .lean();
 
         res.json({
             exito: true,
             data: clientes,
-            total: clientes.length
+            total,
+            pagina,
+            totalPaginas: Math.ceil(total / limite)
         });
     } catch (error) {
         next(error);

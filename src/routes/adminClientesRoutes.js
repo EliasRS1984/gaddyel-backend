@@ -17,6 +17,7 @@ import {
     actualizarCliente,
     eliminarCliente
 } from '../controllers/adminClientesController.js';
+import { clientUpdateSchema, validarCliente } from '../validators/clientValidator.js';
 
 const router = express.Router();
 
@@ -42,8 +43,9 @@ router.get('/', listarClientes);
 // Obtener los datos completos de un cliente específico con su historial de pedidos
 router.get('/:id', obtenerCliente);
 
-// Actualizar datos de un cliente (nombre, email, whatsapp, dirección)
-router.put('/:id', actualizarCliente);
+// Actualizar datos de un cliente (nombre, email, whatsapp, dirección, notas)
+// validarCliente verifica que los campos sean válidos antes de llegar al controlador
+router.put('/:id', validarCliente(clientUpdateSchema), actualizarCliente);
 
 // Eliminar un cliente de la base de datos (acción destructiva — confirmada en el frontend)
 router.delete('/:id', eliminarCliente);
