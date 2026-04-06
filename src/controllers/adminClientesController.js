@@ -59,7 +59,7 @@ export const listarClientes = async (req, res, next) => {
             .sort({ createdAt: -1 })
             .skip(saltar)
             .limit(limite)
-            .populate('historialPedidos', 'orderNumber total estadoPago fechaCreacion')
+            .populate('historialPedidos', 'orderNumber total estadoPago createdAt')
             .lean();
 
         res.json({
@@ -85,8 +85,8 @@ export const obtenerCliente = async (req, res, next) => {
             .select('-password')
             .populate({
                 path: 'historialPedidos',
-                select: 'orderNumber total estadoPago estadoPedido fechaCreacion diasProduccion fechaEnvioEstimada cantidadProductos items datosComprador',
-                options: { sort: { fechaCreacion: -1 } }
+                select: 'orderNumber total estadoPago estadoPedido createdAt diasProduccion fechaEnvioEstimada cantidadProductos items datosComprador',
+                options: { sort: { createdAt: -1 } }
             });
 
         if (!cliente) {
@@ -103,7 +103,7 @@ export const obtenerCliente = async (req, res, next) => {
             total: orden.total,
             estadoPago: orden.estadoPago,
             estadoPedido: orden.estadoPedido,
-            fechaCreacion: orden.fechaCreacion,
+            createdAt: orden.createdAt,
             diasProduccion: orden.diasProduccion,
             fechaEnvioEstimada: orden.fechaEnvioEstimada,
             cantidadProductos: orden.cantidadProductos,
