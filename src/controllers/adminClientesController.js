@@ -17,6 +17,7 @@
  */
 
 import Client from '../models/Client.js';
+import Order from '../models/Order.js';
 import logger from '../utils/logger.js';
 import { validateObjectId } from '../validators/noSqlInjectionValidator.js';
 
@@ -59,12 +60,28 @@ export const listarClientes = async (req, res, next) => {
             .sort({ createdAt: -1 })
             .skip(saltar)
             .limit(limite)
-            .populate('historialPedidos', 'orderNumber total estadoPago createdAt')
             .lean();
+
+        // ======== CONTAR ÓRDENES REALES POR CLIENTE ========
+        // En lugar de confiar en el contador totalPedidos (que puede quedar desactualizado
+        // si el webhook de pago falló), se consultan las órdenes directamente.
+        // ¿El contador sigue mostrando 0? Revisar que la conexión a la base de datos funcione.
+        const clienteIds = clientes.map(c => c._id);
+        const conteoOrdenes = await Order.aggregate([
+            { $match: { clienteId: { $in: clienteIds }, estadoPago: 'approved' } },
+            { $group: { _id: '$clienteId', total: { $sum: 1 } } }
+        ]);
+        const mapaConteo = Object.fromEntries(
+            conteoOrdenes.map(o => [o._id.toString(), o.total])
+        );
+        const clientesConConteo = clientes.map(c => ({
+            ...c,
+            totalPedidos: mapaConteo[c._id.toString()] ?? c.totalPedidos ?? 0
+        }));
 
         res.json({
             exito: true,
-            data: clientes,
+            data: clientesConConteo,
             total,
             pagina,
             totalPaginas: Math.ceil(total / limite)
@@ -83,11 +100,7 @@ export const obtenerCliente = async (req, res, next) => {
 
         const cliente = await Client.findById(req.params.id)
             .select('-password')
-            .populate({
-                path: 'historialPedidos',
-                select: 'orderNumber total estadoPago estadoPedido createdAt diasProduccion fechaEnvioEstimada cantidadProductos items datosComprador',
-                options: { sort: { createdAt: -1 } }
-            });
+            .lean();
 
         if (!cliente) {
             return res.status(404).json({
@@ -96,8 +109,17 @@ export const obtenerCliente = async (req, res, next) => {
             });
         }
 
-        // Formatear el historial para mostrar información útil al admin
-        const historialEnriquecido = cliente.historialPedidos.map(orden => ({
+        // ======== HISTORIAL DESDE LA COLECCIÓN DE ÓRDENES ========
+        // Se consultan las órdenes directamente por clienteId en lugar de depender
+        // del array historialPedidos del cliente. Esto garantiza que el historial
+        // sea correcto aunque el webhook de MP haya fallado en algún momento.
+        // ¿El historial sigue vacío? Revisar que las órdenes tengan clienteId correcto.
+        const ordenes = await Order.find({ clienteId: cliente._id })
+            .select('orderNumber total estadoPago estadoPedido createdAt diasProduccion fechaEnvioEstimada cantidadProductos items')
+            .sort({ createdAt: -1 })
+            .lean();
+
+        const historialEnriquecido = ordenes.map(orden => ({
             _id: orden._id,
             orderNumber: orden.orderNumber,
             total: orden.total,
@@ -119,7 +141,7 @@ export const obtenerCliente = async (req, res, next) => {
         res.json({
             exito: true,
             data: {
-                ...cliente.toObject(),
+                ...cliente,
                 historialPedidos: historialEnriquecido
             }
         });
@@ -135,7 +157,7 @@ export const actualizarCliente = async (req, res, next) => {
     try {
         validateObjectId(req.params.id, 'id');
 
-        const { nombre, email, whatsapp, domicilio, localidad, provincia, codigoPostal } = req.body;
+        const { nombre, email, whatsapp, domicilio, localidad, provincia, codigoPostal, notasInternas } = req.body;
 
         // Verificar que el nuevo email no esté siendo usado por otro cliente
         if (email) {
@@ -160,6 +182,7 @@ export const actualizarCliente = async (req, res, next) => {
         if (localidad !== undefined) datosActualizar.localidad = localidad;
         if (provincia !== undefined) datosActualizar.provincia = provincia;
         if (codigoPostal !== undefined) datosActualizar.codigoPostal = codigoPostal;
+        if (notasInternas !== undefined) datosActualizar.notasInternas = notasInternas;
 
         const cliente = await Client.findByIdAndUpdate(
             req.params.id,
