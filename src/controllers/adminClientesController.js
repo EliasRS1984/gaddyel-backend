@@ -115,7 +115,7 @@ export const obtenerCliente = async (req, res, next) => {
         // sea correcto aunque el webhook de MP haya fallado en algún momento.
         // ¿El historial sigue vacío? Revisar que las órdenes tengan clienteId correcto.
         const ordenes = await Order.find({ clienteId: cliente._id })
-            .select('orderNumber total estadoPago estadoPedido createdAt diasProduccion fechaEnvioEstimada cantidadProductos items')
+            .select('orderNumber total estadoPago estadoPedido createdAt diasProduccion fechaEnvioEstimada cantidadProductos items datosComprador')
             .sort({ createdAt: -1 })
             .lean();
 
@@ -130,6 +130,9 @@ export const obtenerCliente = async (req, res, next) => {
             fechaEnvioEstimada: orden.fechaEnvioEstimada,
             cantidadProductos: orden.cantidadProductos,
             cantidad_items: orden.items?.length || 0,
+            // Nota adicional que el cliente escribió al momento del pedido (ej: "dejar en portería")
+            // ¿No aparece la nota? Verificar que el cliente la haya ingresado al hacer el pedido.
+            notasAdicionales: orden.datosComprador?.notasAdicionales || '',
             detalles: orden.items?.map(item => ({
                 nombre: item.nombre,
                 cantidad: item.cantidad,
