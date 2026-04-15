@@ -51,6 +51,17 @@ const carouselImageSchema = new mongoose.Schema(
     publicId: {
       type: String, // Para Cloudinary, facilita eliminación
       default: null
+    },
+    // URL de la imagen adaptada para pantallas de celular (formato vertical 3:4).
+    // Si no se carga ninguna, el carrusel mostrará la imagen de escritorio como respaldo.
+    srcMobile: {
+      type: String,
+      default: null
+    },
+    // ID de Cloudinary para la imagen móvil, necesario para borrarla cuando se elimina la entrada.
+    publicIdMobile: {
+      type: String,
+      default: null
     }
   },
   {

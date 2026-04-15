@@ -71,7 +71,7 @@ export const obtenerTodasImagenesCarrusel = async (req, res, next) => {
 
 export const crearImagenCarrusel = async (req, res, next) => {
     try {
-        const { src, alt, caption, orden, activo, publicId } = req.body;
+        const { src, alt, caption, orden, activo, publicId, srcMobile, publicIdMobile } = req.body;
 
         if (!src || src.trim() === '') {
             return res.status(400).json({
@@ -81,12 +81,14 @@ export const crearImagenCarrusel = async (req, res, next) => {
         }
 
         const nuevaImagen = new CarouselImage({
-            src:      src.trim(),
-            alt:      alt?.trim() || "Imagen del carrusel Gaddyel",
-            caption:  caption?.trim() || "",
-            orden:    orden || 0,
-            activo:   activo !== undefined ? activo : true,
-            publicId: publicId || null
+            src:            src.trim(),
+            alt:            alt?.trim() || "Imagen del carrusel Gaddyel",
+            caption:        caption?.trim() || "",
+            orden:          orden || 0,
+            activo:         activo !== undefined ? activo : true,
+            publicId:       publicId || null,
+            srcMobile:      srcMobile?.trim() || null,
+            publicIdMobile: publicIdMobile || null
         });
 
         await nuevaImagen.save();
@@ -111,18 +113,20 @@ export const crearImagenCarrusel = async (req, res, next) => {
 export const actualizarImagenCarrusel = async (req, res, next) => {
     try {
         const { id } = req.params;
-        const { src, alt, caption, orden, activo } = req.body;
+        const { src, alt, caption, orden, activo, srcMobile, publicIdMobile } = req.body;
 
         const imagen = await CarouselImage.findById(id);
         if (!imagen) {
             return res.status(404).json({ success: false, message: 'Imagen no encontrada' });
         }
 
-        if (src     !== undefined) imagen.src     = src.trim();
-        if (alt     !== undefined) imagen.alt     = alt.trim();
-        if (caption !== undefined) imagen.caption = caption.trim();
-        if (orden   !== undefined) imagen.orden   = orden;
-        if (activo  !== undefined) imagen.activo  = activo;
+        if (src            !== undefined) imagen.src            = src.trim();
+        if (alt            !== undefined) imagen.alt            = alt.trim();
+        if (caption        !== undefined) imagen.caption        = caption.trim();
+        if (orden          !== undefined) imagen.orden          = orden;
+        if (activo         !== undefined) imagen.activo         = activo;
+        if (srcMobile      !== undefined) imagen.srcMobile      = srcMobile ? srcMobile.trim() : null;
+        if (publicIdMobile !== undefined) imagen.publicIdMobile = publicIdMobile || null;
 
         await imagen.save();
         logger.info(`Imagen de carrusel actualizada: ${id}`);
@@ -157,6 +161,16 @@ export const eliminarImagenCarrusel = async (req, res, next) => {
             } catch (cloudinaryError) {
                 // No bloquear la eliminación en base de datos si Cloudinary falla
                 logger.warn(`No se pudo eliminar de Cloudinary: ${cloudinaryError.message}`);
+            }
+        }
+
+        // Si tiene imagen móvil en Cloudinary, también se elimina
+        if (imagen.publicIdMobile) {
+            try {
+                await cloudinary.uploader.destroy(imagen.publicIdMobile);
+                logger.info(`Imagen móvil eliminada de Cloudinary: ${imagen.publicIdMobile}`);
+            } catch (cloudinaryError) {
+                logger.warn(`No se pudo eliminar imagen móvil de Cloudinary: ${cloudinaryError.message}`);
             }
         }
 
