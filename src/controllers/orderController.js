@@ -97,10 +97,14 @@ export const createOrder = async (req, res, next) => {
             const itemSubtotal = producto.precio * item.cantidad;
             subtotalCalculado += itemSubtotal;
 
+            // cantidadUnidades: cuántas unidades individuales trae cada paquete de este producto.
+            // Se copia del producto en el momento de la compra para que quede registrado
+            // incluso si el producto cambia después.
             productosValidados.push({
                 productoId: producto._id,
                 nombre: producto.nombre,
                 cantidad: item.cantidad,
+                cantidadUnidades: producto.cantidadUnidades || 1,
                 precioUnitario: producto.precio,
                 subtotal: itemSubtotal
             });
