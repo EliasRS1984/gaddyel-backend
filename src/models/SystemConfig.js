@@ -40,11 +40,23 @@ const systemConfigSchema = new mongoose.Schema({
       min: 0,
       description: 'Costo de envío en ARS'
     },
+    cantidadMinimaPedido: {
+      type: Number,
+      default: 12,
+      min: 0,
+      description: 'Cantidad mínima de productos para habilitar checkout'
+    },
     cantidadParaEnvioGratis: {
       type: Number,
-      default: 3,
+      default: 12,
       min: 0,
-      description: 'Cantidad de productos para envío gratis'
+      description: 'Compatibilidad con configuraciones previas'
+    },
+    montoParaEnvioGratis: {
+      type: Number,
+      default: 200000,
+      min: 0,
+      description: 'Importe mínimo del subtotal para envío gratis'
     },
     habilitarEnvioGratis: {
       type: Boolean,
@@ -140,7 +152,9 @@ systemConfigSchema.statics.obtenerConfigActual = async function() {
       configKey: 'system_default',
       envio: {
         costoBase: 12000,
-        cantidadParaEnvioGratis: 3,
+        cantidadMinimaPedido: 12,
+        cantidadParaEnvioGratis: 12,
+        montoParaEnvioGratis: 200000,
         habilitarEnvioGratis: true
       },
       comisiones: {
@@ -162,16 +176,15 @@ systemConfigSchema.statics.obtenerConfigActual = async function() {
 
 // ======== MÉTODOS DE INSTANCIA ========
 
-// Calcula el costo de envío según la cantidad de productos en el carrito.
-// Si la cantidad supera el umbral, el envío es gratis.
-systemConfigSchema.methods.calcularEnvio = function(cantidadProductos) {
+// Calcula el costo de envío según el subtotal del carrito.
+// Si el importe supera el umbral configurado, el envío es gratis.
+systemConfigSchema.methods.calcularEnvio = function(subtotal) {
   if (!this.envio.habilitarEnvioGratis) {
     return this.envio.costoBase;
   }
-  
-  return cantidadProductos >= this.envio.cantidadParaEnvioGratis 
-    ? 0 
-    : this.envio.costoBase;
+
+  const montoMinimo = this.envio.montoParaEnvioGratis ?? 200000;
+  return subtotal >= montoMinimo ? 0 : this.envio.costoBase;
 };
 
 // Calcula el precio de venta a partir del precio base aplicando la comisión de MP.

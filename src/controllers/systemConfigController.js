@@ -101,22 +101,58 @@ export const actualizarConfiguracion = async (req, res) => {
         config.envio.costoBase = envio.costoBase;
       }
 
-      if (envio.cantidadParaEnvioGratis !== undefined) {
+      if (envio.cantidadMinimaPedido !== undefined) {
+        if (envio.cantidadMinimaPedido < 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'La cantidad mínima de productos no puede ser negativa'
+          });
+        }
+
+        cambios.push({
+          campo: 'envio.cantidadMinimaPedido',
+          valorAnterior: config.envio.cantidadMinimaPedido,
+          valorNuevo: envio.cantidadMinimaPedido,
+          usuario: usuarioId
+        });
+
+        config.envio.cantidadMinimaPedido = envio.cantidadMinimaPedido;
+        config.envio.cantidadParaEnvioGratis = envio.cantidadMinimaPedido;
+      } else if (envio.cantidadParaEnvioGratis !== undefined) {
         if (envio.cantidadParaEnvioGratis < 0) {
           return res.status(400).json({
             success: false,
-            message: 'La cantidad para envío gratis no puede ser negativa'
+            message: 'La cantidad mínima de productos no puede ser negativa'
           });
         }
-        
+
         cambios.push({
-          campo: 'envio.cantidadParaEnvioGratis',
-          valorAnterior: config.envio.cantidadParaEnvioGratis,
+          campo: 'envio.cantidadMinimaPedido',
+          valorAnterior: config.envio.cantidadMinimaPedido,
           valorNuevo: envio.cantidadParaEnvioGratis,
           usuario: usuarioId
         });
-        
+
+        config.envio.cantidadMinimaPedido = envio.cantidadParaEnvioGratis;
         config.envio.cantidadParaEnvioGratis = envio.cantidadParaEnvioGratis;
+      }
+
+      if (envio.montoParaEnvioGratis !== undefined) {
+        if (envio.montoParaEnvioGratis < 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'El importe mínimo para envío gratis no puede ser negativo'
+          });
+        }
+
+        cambios.push({
+          campo: 'envio.montoParaEnvioGratis',
+          valorAnterior: config.envio.montoParaEnvioGratis,
+          valorNuevo: envio.montoParaEnvioGratis,
+          usuario: usuarioId
+        });
+
+        config.envio.montoParaEnvioGratis = envio.montoParaEnvioGratis;
       }
 
       if (envio.habilitarEnvioGratis !== undefined) {

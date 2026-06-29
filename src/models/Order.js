@@ -22,6 +22,20 @@
 
 import mongoose from "mongoose";
 
+export const sumarDiasHabiles = (fechaBase, dias) => {
+    const fecha = new Date(fechaBase);
+    let diasRestantes = Math.max(0, Number(dias) || 0);
+
+    while (diasRestantes > 0) {
+        fecha.setDate(fecha.getDate() + 1);
+        if (fecha.getDay() !== 0 && fecha.getDay() !== 6) {
+            diasRestantes -= 1;
+        }
+    }
+
+    return fecha;
+};
+
 const orderSchema = new mongoose.Schema({
     // Número de orden único e incremental (formato: #000001)
     orderNumber: {
@@ -324,7 +338,7 @@ const orderSchema = new mongoose.Schema({
     fechaEnvioEstimada: {
         type: Date,
         default: null
-        // Se calcula automáticamente: fechaCreacion + 20 días
+        // Se calcula automáticamente: fechaCreacion + 20 días hábiles
     },
     fechaEnvioReal: {
         type: Date,
@@ -335,7 +349,7 @@ const orderSchema = new mongoose.Schema({
         default: null
     },
     
-    // Tiempo de producción (en días corridos)
+    // Tiempo de producción (en días hábiles)
     diasProduccion: {
         type: Number,
         default: 20,
@@ -437,14 +451,10 @@ orderSchema.index({ estadoPago: 1, estadoPedido: 1 }); // Filtros combinados en 
 orderSchema.pre('save', function(next) {
     // Solo calcular si es nuevo documento y no tiene fecha estimada
     if (this.isNew && !this.fechaEnvioEstimada) {
-        const fechaBase = this.fechaCreacion || new Date();
+        const fechaBase = this.createdAt || this.fechaCreacion || new Date();
         const diasProduccion = this.diasProduccion || 20;
         
-        // Calcular fecha sumando días corridos
-        const fechaEstimada = new Date(fechaBase);
-        fechaEstimada.setDate(fechaEstimada.getDate() + diasProduccion);
-        
-        this.fechaEnvioEstimada = fechaEstimada;
+        this.fechaEnvioEstimada = sumarDiasHabiles(fechaBase, diasProduccion);
     }
     next();
 });

@@ -100,11 +100,12 @@ export const createOrder = async (req, res, next) => {
             // cantidadUnidades: cuántas unidades individuales trae cada paquete de este producto.
             // Se copia del producto en el momento de la compra para que quede registrado
             // incluso si el producto cambia después.
+            const cantidadProducto = producto.cantidadproducto ?? producto.cantidadUnidades ?? 1;
             productosValidados.push({
                 productoId: producto._id,
                 nombre: producto.nombre,
                 cantidad: item.cantidad,
-                cantidadUnidades: producto.cantidadUnidades || 1,
+                cantidadUnidades: cantidadProducto,
                 precioUnitario: producto.precio,
                 subtotal: itemSubtotal
             });
@@ -113,9 +114,15 @@ export const createOrder = async (req, res, next) => {
         // ✅ Obtener configuración del sistema para cálculo de envío
         const systemConfig = await SystemConfig.obtenerConfigActual();
         
-        // ✅ Calcular costo de envío basado en configuración global
-        const cantidadProductos = validatedItems.reduce((sum, item) => sum + item.cantidad, 0);
-        const costoEnvioCalculado = systemConfig.calcularEnvio(cantidadProductos);
+        // ✅ Calcular costo de envío basado en el subtotal y la cantidad mínima de productos
+        const cantidadProductos = validatedItems.length;
+        const cantidadMinimaPedido = Number(systemConfig.envio.cantidadMinimaPedido ?? systemConfig.envio.cantidadParaEnvioGratis ?? 12);
+
+        if (cantidadProductos < cantidadMinimaPedido) {
+            return res.status(400).json({ error: `Necesitas al menos ${cantidadMinimaPedido} productos para completar el pedido` });
+        }
+
+        const costoEnvioCalculado = systemConfig.calcularEnvio(subtotalCalculado);
         const totalCalculado = subtotalCalculado + costoEnvioCalculado;
 
         // SEGURIDAD: Validar que el cliente no manipuló el total en su solicitud.

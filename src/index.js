@@ -238,14 +238,16 @@ app.get('/api/config/envio', async (_req, res) => {
     try {
         const config = await SystemConfig.obtenerConfigActual();
         res.json({
-            cantidadParaEnvioGratis: config.envio.cantidadParaEnvioGratis,
+            cantidadMinimaPedido: config.envio.cantidadMinimaPedido ?? config.envio.cantidadParaEnvioGratis ?? 12,
+            cantidadParaEnvioGratis: config.envio.cantidadMinimaPedido ?? config.envio.cantidadParaEnvioGratis ?? 12,
+            montoParaEnvioGratis: config.envio.montoParaEnvioGratis ?? 200000,
             costoBase: config.envio.costoBase,
             habilitarEnvioGratis: config.envio.habilitarEnvioGratis,
         });
     } catch (_err) {
         // Si la base de datos no responde, devolver valores predeterminados
         // para que el frontend siga mostrando información coherente
-        res.json({ cantidadParaEnvioGratis: 3, costoBase: 12000, habilitarEnvioGratis: true });
+        res.json({ cantidadMinimaPedido: 12, cantidadParaEnvioGratis: 12, montoParaEnvioGratis: 200000, costoBase: 12000, habilitarEnvioGratis: true });
     }
 });
 
