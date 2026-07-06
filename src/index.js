@@ -113,32 +113,34 @@ app.use(cors({
         if (!origin) {
             return callback(null, true);
         }
-        
-        // ✅ En desarrollo, permitir cualquier localhost
-        if (process.env.NODE_ENV !== 'production') {
-            if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+
+        const isDevelopment = process.env.NODE_ENV !== 'production';
+
+        // ✅ En desarrollo, permitir solo orígenes locales y túneles autorizados.
+        // Esto evita que el backend local acepte peticiones del frontend desplegado en Vercel.
+        if (isDevelopment) {
+            const isLocalOrigin = origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:');
+            const isTrustedTunnel = origin.includes('.ngrok') || origin.includes('.loca.lt') || origin.includes('ngrok-free.dev');
+
+            if (isLocalOrigin || isTrustedTunnel) {
                 return callback(null, true);
             }
+
+            logger.security(`CORS bloqueado en desarrollo: ${origin}`);
+            return callback(new Error('Not allowed by CORS'));
         }
 
-        // ✅ Permitir túneles (ngrok, localtunnel) en desarrollo
-        if (process.env.NODE_ENV !== 'production') {
-            if (origin.includes('.ngrok') || origin.includes('.loca.lt') || origin.includes('ngrok-free.dev')) {
-                return callback(null, true);
-            }
-        }
-        
-        // ✅ Whitelist estricta (desarrollo y producción)
+        // ✅ Whitelist estricta en producción
         if (allowedOrigins.includes(origin)) {
             return callback(null, true);
         }
 
         // ✅ DINÁMICO: Aceptar cualquier subdomain *.vercel.app en producción
         // Vercel asigna URLs dinámicas con hash (proyecto-gaddyel-XXX.vercel.app)
-        if (process.env.NODE_ENV === 'production' && origin.endsWith('.vercel.app')) {
+        if (origin.endsWith('.vercel.app')) {
             return callback(null, true);
         }
-        
+
         // ❌ RECHAZAR orígenes no autorizados
         logger.security(`CORS bloqueado: ${origin}`);
         callback(new Error('Not allowed by CORS'));
