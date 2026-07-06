@@ -113,9 +113,11 @@ export const createOrder = async (req, res, next) => {
 
         // ✅ Obtener configuración del sistema para cálculo de envío
         const systemConfig = await SystemConfig.obtenerConfigActual();
-        
-        // ✅ Calcular costo de envío basado en el subtotal y la cantidad mínima de productos
-        const cantidadProductos = validatedItems.length;
+
+        // ✅ Cantidad de productos = suma de las cantidades de cada línea del carrito,
+        // NO la cantidad de líneas distintas. Un carrito con 1 producto en cantidad 12
+        // debe contar como 12, igual que el carrito del cliente y el checkout del frontend.
+        const cantidadProductos = validatedItems.reduce((sum, item) => sum + item.cantidad, 0);
         const cantidadMinimaPedido = Number(systemConfig.envio.cantidadMinimaPedido ?? systemConfig.envio.cantidadParaEnvioGratis ?? 12);
 
         if (cantidadProductos < cantidadMinimaPedido) {
