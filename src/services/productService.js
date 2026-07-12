@@ -36,7 +36,8 @@ class ProductService {
                 destacado,
                 personalizable,
                 sortBy = 'createdAt',
-                sortDir = -1
+                sortDir = -1,
+                search        // ← búsqueda full-text cross-page (índice 'text' en nombre+descripcion)
             } = filters;
 
             const pageNum = Math.max(1, parseInt(page) || 1);
@@ -50,18 +51,33 @@ class ProductService {
             if (destacado !== undefined) matchStage.destacado = destacado === 'true';
             if (personalizable !== undefined) matchStage.personalizable = personalizable === 'true';
 
+            // Búsqueda full-text usando el índice de texto del modelo.
+            // El índice cubre: nombre + descripcion (ver Product.js).
+            // Se sanitiza la entrada para evitar inyección de operadores MongoDB.
+            if (search && typeof search === 'string') {
+                // Limitar longitud para evitar búsquedas abusivas
+                const sanitizedSearch = search.trim().slice(0, 100);
+                if (sanitizedSearch.length > 0) {
+                    matchStage.$text = { $search: sanitizedSearch };
+                }
+            }
+
             if (Object.keys(matchStage).length > 0) {
                 pipeline.push({ $match: matchStage });
             }
 
-            // Solo se permite ordenar por campos seguros.
-            // Si llega un campo desconocido, se usa 'createdAt' por defecto.
-            const validSortFields = ['precio', 'nombre', 'createdAt', 'destacado', 'categoria'];
-            const safeSortBy = validSortFields.includes(sortBy) ? sortBy : 'createdAt';
-
-            // Ordenar, paginar y seleccionar campos
+            // Si hay búsqueda de texto, ordenar por relevancia en lugar del campo pedido.
+            // Esto asegura que los resultados más relevantes aparezcan primero.
             const sortObj = {};
-            sortObj[safeSortBy] = parseInt(sortDir) || -1;
+            if (matchStage.$text) {
+                sortObj.score = { $meta: 'textScore' };
+            } else {
+                // Solo se permite ordenar por campos seguros.
+                // Si llega un campo desconocido, se usa 'createdAt' por defecto.
+                const validSortFields = ['precio', 'nombre', 'createdAt', 'destacado', 'categoria'];
+                const safeSortBy = validSortFields.includes(sortBy) ? sortBy : 'createdAt';
+                sortObj[safeSortBy] = parseInt(sortDir) || -1;
+            }
             pipeline.push({ $sort: sortObj });
 
             const countResult = await Producto.aggregate([
@@ -81,7 +97,9 @@ class ProductService {
                     categoria: 1,
                     precio: 1,
                     cantidadUnidades: 1,
-                    createdAt: 1
+                    createdAt: 1,
+                    // Incluir score de relevancia solo cuando hay búsqueda de texto
+                    ...(matchStage.$text && { score: { $meta: 'textScore' } })
                 }
             });
 
